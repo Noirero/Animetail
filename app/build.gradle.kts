@@ -17,7 +17,7 @@ android {
     namespace = "eu.kanade.tachiyomi"
 
     defaultConfig {
-        applicationId = "com.dark.animetailv2"
+        applicationId = "com.lalapo.animetail"
 
         versionCode = 141
         versionName = "0.20.1.3"
