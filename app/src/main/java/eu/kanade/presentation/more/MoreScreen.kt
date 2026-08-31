@@ -95,6 +95,7 @@ fun MoreScreen(
                         title = stringResource(MR.strings.label_download_queue),
                         subtitle = when (downloadQueueState) {
                             DownloadQueueState.Stopped -> null
+
                             is DownloadQueueState.Paused -> {
                                 val pending = downloadQueueState.pending
                                 if (pending == 0) {
@@ -109,6 +110,7 @@ fun MoreScreen(
                                     }"
                                 }
                             }
+
                             is DownloadQueueState.Downloading -> {
                                 val pending = downloadQueueState.pending
                                 pluralStringResource(
