@@ -1,18 +1,21 @@
 package eu.kanade.presentation.more
 
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.VideoSettings
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
@@ -23,7 +26,6 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.more.DownloadQueueState
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
-import tachiyomi.i18n.tail.TLMR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.pluralStringResource
@@ -56,127 +58,140 @@ fun MoreScreen(
     Scaffold { contentPadding ->
         ScrollbarLazyColumn(contentPadding = contentPadding) {
             item {
-                LogoHeader(
-                    iconPadding = PaddingValues(vertical = 32.dp),
-                )
+                MoreCard {
+                    SwitchPreferenceWidget(
+                        title = stringResource(MR.strings.label_downloaded_only),
+                        subtitle = stringResource(MR.strings.downloaded_only_summary),
+                        icon = Icons.Outlined.CloudOff,
+                        checked = downloadedOnly,
+                        onCheckedChanged = onDownloadedOnlyChange,
+                    )
+                }
             }
             item {
-                SwitchPreferenceWidget(
-                    title = stringResource(MR.strings.label_downloaded_only),
-                    subtitle = stringResource(MR.strings.downloaded_only_summary),
-                    icon = Icons.Outlined.CloudOff,
-                    checked = downloadedOnly,
-                    onCheckedChanged = onDownloadedOnlyChange,
-                )
+                MoreCard {
+                    SwitchPreferenceWidget(
+                        title = stringResource(MR.strings.pref_incognito_mode),
+                        subtitle = stringResource(AYMR.strings.pref_incognito_mode_summary),
+                        icon = ImageVector.vectorResource(R.drawable.ic_glasses_24dp),
+                        checked = incognitoMode,
+                        onCheckedChanged = onIncognitoModeChange,
+                    )
+                }
             }
             item {
-                SwitchPreferenceWidget(
-                    title = stringResource(MR.strings.pref_incognito_mode),
-                    subtitle = stringResource(AYMR.strings.pref_incognito_mode_summary),
-                    icon = ImageVector.vectorResource(R.drawable.ic_glasses_24dp),
-                    checked = incognitoMode,
-                    onCheckedChanged = onIncognitoModeChange,
-                )
+                MoreCard {
+                    TextPreferenceWidget(
+                        title = navStyle.moreTab.options.title,
+                        icon = navStyle.moreIcon,
+                        onPreferenceClick = onClickAlt,
+                    )
+                }
             }
-
-            item { HorizontalDivider() }
-
-            item {
-                TextPreferenceWidget(
-                    title = navStyle.moreTab.options.title,
-                    icon = navStyle.moreIcon,
-                    onPreferenceClick = onClickAlt,
-                )
-            }
-
             item {
                 val downloadQueueState = downloadQueueStateProvider()
-                TextPreferenceWidget(
-                    title = stringResource(MR.strings.label_download_queue),
-                    subtitle = when (downloadQueueState) {
-                        DownloadQueueState.Stopped -> null
-
-                        is DownloadQueueState.Paused -> {
-                            val pending = downloadQueueState.pending
-                            if (pending == 0) {
-                                stringResource(MR.strings.paused)
-                            } else {
-                                "${stringResource(MR.strings.paused)} • ${
-                                    pluralStringResource(
-                                        MR.plurals.download_queue_summary,
-                                        count = pending,
-                                        pending,
-                                    )
-                                }"
+                MoreCard {
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.label_download_queue),
+                        subtitle = when (downloadQueueState) {
+                            DownloadQueueState.Stopped -> null
+                            is DownloadQueueState.Paused -> {
+                                val pending = downloadQueueState.pending
+                                if (pending == 0) {
+                                    stringResource(MR.strings.paused)
+                                } else {
+                                    "${stringResource(MR.strings.paused)} • ${
+                                        pluralStringResource(
+                                            MR.plurals.download_queue_summary,
+                                            count = pending,
+                                            pending,
+                                        )
+                                    }"
+                                }
                             }
-                        }
-
-                        is DownloadQueueState.Downloading -> {
-                            val pending = downloadQueueState.pending
-                            pluralStringResource(
-                                MR.plurals.download_queue_summary,
-                                count = pending,
-                                pending,
-                            )
-                        }
-                    },
-                    icon = Icons.Outlined.GetApp,
-                    onPreferenceClick = onClickDownloadQueue,
-                )
+                            is DownloadQueueState.Downloading -> {
+                                val pending = downloadQueueState.pending
+                                pluralStringResource(
+                                    MR.plurals.download_queue_summary,
+                                    count = pending,
+                                    pending,
+                                )
+                            }
+                        },
+                        icon = Icons.Outlined.GetApp,
+                        onPreferenceClick = onClickDownloadQueue,
+                    )
+                }
             }
             item {
-                TextPreferenceWidget(
-                    title = stringResource(AYMR.strings.general_categories),
-                    icon = Icons.AutoMirrored.Outlined.Label,
-                    onPreferenceClick = onClickCategories,
-                )
+                MoreCard {
+                    TextPreferenceWidget(
+                        title = stringResource(AYMR.strings.general_categories),
+                        icon = Icons.AutoMirrored.Outlined.Label,
+                        onPreferenceClick = onClickCategories,
+                    )
+                }
             }
             item {
-                TextPreferenceWidget(
-                    title = stringResource(MR.strings.label_stats),
-                    icon = Icons.Outlined.QueryStats,
-                    onPreferenceClick = onClickStats,
-                )
+                MoreCard {
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.label_stats),
+                        icon = Icons.Outlined.QueryStats,
+                        onPreferenceClick = onClickStats,
+                    )
+                }
             }
             item {
-                TextPreferenceWidget(
-                    title = stringResource(TLMR.strings.network_stream),
-                    subtitle = stringResource(TLMR.strings.network_stream_summary),
-                    icon = Icons.Outlined.Link,
-                    onPreferenceClick = onClickNetworkStream,
-                )
+                MoreCard {
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.label_data_storage),
+                        icon = Icons.Outlined.Storage,
+                        onPreferenceClick = onClickDataAndStorage,
+                    )
+                }
             }
             item {
-                TextPreferenceWidget(
-                    title = stringResource(MR.strings.label_data_storage),
-                    icon = Icons.Outlined.Storage,
-                    onPreferenceClick = onClickDataAndStorage,
-                )
-            }
-
-            item { HorizontalDivider() }
-
-            item {
-                TextPreferenceWidget(
-                    title = stringResource(MR.strings.label_settings),
-                    icon = Icons.Outlined.Settings,
-                    onPreferenceClick = onClickSettings,
-                )
+                MoreCard {
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.label_settings),
+                        icon = Icons.Outlined.Settings,
+                        onPreferenceClick = onClickSettings,
+                    )
+                }
             }
             item {
-                TextPreferenceWidget(
-                    title = stringResource(AYMR.strings.label_player_settings),
-                    icon = Icons.Outlined.VideoSettings,
-                    onPreferenceClick = onClickPlayerSettings,
-                )
+                MoreCard {
+                    TextPreferenceWidget(
+                        title = stringResource(AYMR.strings.label_player_settings),
+                        icon = Icons.Outlined.VideoSettings,
+                        onPreferenceClick = onClickPlayerSettings,
+                    )
+                }
             }
             item {
-                TextPreferenceWidget(
-                    title = stringResource(MR.strings.pref_category_about),
-                    icon = Icons.Outlined.Info,
-                    onPreferenceClick = onClickAbout,
-                )
+                MoreCard {
+                    TextPreferenceWidget(
+                        title = stringResource(MR.strings.pref_category_about),
+                        icon = Icons.Outlined.Info,
+                        onPreferenceClick = onClickAbout,
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun MoreCard(
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        tonalElevation = 1.dp,
+    ) {
+        content()
     }
 }
