@@ -29,10 +29,6 @@ import eu.kanade.tachiyomi.ui.browse.anime.source.animeSourcesTab
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.GlobalAnimeSearchScreen
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenModel
 import eu.kanade.tachiyomi.ui.browse.feed.feedTab
-import eu.kanade.tachiyomi.ui.browse.manga.extension.MangaExtensionsScreenModel
-import eu.kanade.tachiyomi.ui.browse.manga.extension.mangaExtensionsTab
-import eu.kanade.tachiyomi.ui.browse.manga.migration.sources.migrateMangaSourceTab
-import eu.kanade.tachiyomi.ui.browse.manga.source.mangaSourcesTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -65,14 +61,9 @@ data object BrowseTab : Tab {
 
     private enum class ExtensionTabTarget {
         ANIME,
-        MANGA,
     }
 
     private val switchToExtensionTabChannel = Channel<ExtensionTabTarget>(1, BufferOverflow.DROP_OLDEST)
-
-    fun showExtension() {
-        switchToExtensionTabChannel.trySend(ExtensionTabTarget.MANGA)
-    }
 
     fun showAnimeExtension() {
         switchToExtensionTabChannel.trySend(ExtensionTabTarget.ANIME)
@@ -88,14 +79,10 @@ data object BrowseTab : Tab {
         // SY <--
 
         // Hoisted for extensions tab's search bar
-        val mangaExtensionsScreenModel = rememberScreenModel { MangaExtensionsScreenModel() }
-        val mangaExtensionsState by mangaExtensionsScreenModel.state.collectAsState()
-
         val animeExtensionsScreenModel = rememberScreenModel { AnimeExtensionsScreenModel() }
         val animeExtensionsState by animeExtensionsScreenModel.state.collectAsState()
 
         val animeExtensionsTabContent = animeExtensionsTab(animeExtensionsScreenModel)
-        val mangaExtensionsTabContent = mangaExtensionsTab(mangaExtensionsScreenModel)
 
         // KMK -->
         val feedScreenModel = rememberScreenModel { FeedScreenModel() }
@@ -138,9 +125,6 @@ data object BrowseTab : Tab {
         val animeExtensionsTabIndex = remember(tabs, animeExtensionsTabContent) {
             tabs.indexOf(animeExtensionsTabContent)
         }
-        val mangaExtensionsTabIndex = remember(tabs, mangaExtensionsTabContent) {
-            tabs.indexOf(mangaExtensionsTabContent)
-        }
 
         val state = rememberPagerState { tabs.size }
 
@@ -148,23 +132,22 @@ data object BrowseTab : Tab {
             titleRes = MR.strings.browse,
             tabs = tabs,
             state = state,
-            mangaSearchQuery = mangaExtensionsState.searchQuery,
-            onChangeMangaSearchQuery = mangaExtensionsScreenModel::search,
+            mangaSearchQuery = "",
+            onChangeMangaSearchQuery = {},
             animeSearchQuery = animeExtensionsState.searchQuery,
             onChangeAnimeSearchQuery = animeExtensionsScreenModel::search,
             animeExtensionsTabIndex = animeExtensionsTabIndex,
-            mangaExtensionsTabIndex = mangaExtensionsTabIndex,
+            mangaExtensionsTabIndex = -1,
             // KMK -->
             feedScreenModel = feedScreenModel,
             // KMK <--
             scrollable = true,
         )
-        LaunchedEffect(animeExtensionsTabIndex, mangaExtensionsTabIndex) {
+        LaunchedEffect(animeExtensionsTabIndex) {
             switchToExtensionTabChannel.receiveAsFlow()
                 .collectLatest { target ->
                     val tabIndex = when (target) {
                         ExtensionTabTarget.ANIME -> animeExtensionsTabIndex
-                        ExtensionTabTarget.MANGA -> mangaExtensionsTabIndex
                     }
                     if (tabIndex >= 0) {
                         state.scrollToPage(tabIndex)
