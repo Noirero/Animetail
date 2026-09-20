@@ -289,5 +289,4 @@ data object DownloadsTab : Tab {
             )
         }
     }
-
 }
