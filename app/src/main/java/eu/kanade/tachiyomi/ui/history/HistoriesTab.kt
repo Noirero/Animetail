@@ -5,8 +5,6 @@ import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
@@ -24,8 +22,6 @@ import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenModel
 import eu.kanade.tachiyomi.ui.history.anime.AnimeHistoryScreenModel
 import eu.kanade.tachiyomi.ui.history.anime.animeHistoryTab
 import eu.kanade.tachiyomi.ui.history.anime.resumeLastEpisodeSeenEvent
-import eu.kanade.tachiyomi.ui.history.manga.MangaHistoryScreenModel
-import eu.kanade.tachiyomi.ui.history.manga.mangaHistoryTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.i18n.MR
@@ -70,9 +66,6 @@ data object HistoriesTab : Tab {
     override fun Content() {
         val context = LocalContext.current
         val fromMore = currentNavigationStyle() == NavStyle.MOVE_HISTORY_TO_MORE
-        // Hoisted for history tab's search bar
-        val mangaHistoryScreenModel = rememberScreenModel { MangaHistoryScreenModel() }
-        val mangaSearchQuery by mangaHistoryScreenModel.query.collectAsState()
         // KMK -->
         val feedScreenModel = rememberScreenModel { FeedScreenModel() }
         // KMK <--
@@ -83,14 +76,13 @@ data object HistoriesTab : Tab {
             titleRes = MR.strings.label_recent_manga,
             tabs = persistentListOf(
                 animeHistoryTab(context, fromMore),
-                mangaHistoryTab(context, fromMore),
             ),
-            mangaSearchQuery = mangaSearchQuery,
-            onChangeMangaSearchQuery = mangaHistoryScreenModel::search,
+            mangaSearchQuery = "",
+            onChangeMangaSearchQuery = {},
             animeSearchQuery = animeSearchQuery,
             onChangeAnimeSearchQuery = animeHistoryScreenModel::search,
             animeExtensionsTabIndex = TAB_ANIME,
-            mangaExtensionsTabIndex = TAB_MANGA,
+            mangaExtensionsTabIndex = -1,
             // KMK -->
             feedScreenModel = feedScreenModel,
             // KMK <--
@@ -104,4 +96,3 @@ data object HistoriesTab : Tab {
 }
 
 private const val TAB_ANIME = 0
-private const val TAB_MANGA = 1
