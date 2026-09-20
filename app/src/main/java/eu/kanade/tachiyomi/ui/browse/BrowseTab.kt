@@ -105,12 +105,9 @@ data object BrowseTab : Tab {
             hideFeedTab ->
                 listOf(
                     animeSourcesTab(),
-                    mangaSourcesTab(),
                     animeExtensionsTabContent,
-                    mangaExtensionsTabContent,
                     migrateAnimeSourceTab(),
-                    migrateMangaSourceTab(),
-                )
+                    )
 
             feedTabInFront ->
                 listOf(
@@ -120,27 +117,21 @@ data object BrowseTab : Tab {
                         // KMK <--
                     ),
                     animeSourcesTab(),
-                    mangaSourcesTab(),
                     animeExtensionsTabContent,
-                    mangaExtensionsTabContent,
                     migrateAnimeSourceTab(),
-                    migrateMangaSourceTab(),
-                )
+                    )
 
             else ->
                 listOf(
                     animeSourcesTab(),
-                    mangaSourcesTab(),
                     feedTab(
                         // KMK -->
                         feedScreenModel,
                         // KMK <--
                     ),
                     animeExtensionsTabContent,
-                    mangaExtensionsTabContent,
                     migrateAnimeSourceTab(),
-                    migrateMangaSourceTab(),
-                )
+                    )
             // SY <--
         }
 
