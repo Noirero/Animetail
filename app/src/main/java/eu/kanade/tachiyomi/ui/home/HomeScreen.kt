@@ -50,10 +50,8 @@ import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.ui.browse.BrowseTab
 import eu.kanade.tachiyomi.ui.download.DownloadsTab
 import eu.kanade.tachiyomi.ui.entries.anime.AnimeScreen
-import eu.kanade.tachiyomi.ui.entries.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.history.HistoriesTab
 import eu.kanade.tachiyomi.ui.library.anime.AnimeLibraryTab
-import eu.kanade.tachiyomi.ui.library.manga.MangaLibraryTab
 import eu.kanade.tachiyomi.ui.more.MoreTab
 import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.cast.CastMiniController
@@ -211,7 +209,6 @@ object HomeScreen : Screen() {
                         goToStartScreen()
                         when (defaultTab) {
                             AnimeLibraryTab -> AnimeLibraryTab.search(it)
-                            MangaLibraryTab -> MangaLibraryTab.search(it)
                             else -> {}
                         }
                     }
@@ -221,7 +218,7 @@ object HomeScreen : Screen() {
                         tabNavigator.current = when (it) {
                             is Tab.AnimeLib -> AnimeLibraryTab
 
-                            is Tab.Library -> MangaLibraryTab
+                            is Tab.Library -> AnimeLibraryTab
 
                             is Tab.Updates -> UpdatesTab
 
@@ -229,11 +226,7 @@ object HomeScreen : Screen() {
 
                             is Tab.Browse -> {
                                 if (it.toExtensions) {
-                                    if (!it.anime) {
-                                        BrowseTab.showExtension()
-                                    } else {
-                                        BrowseTab.showAnimeExtension()
-                                    }
+                                    BrowseTab.showAnimeExtension()
                                 }
                                 BrowseTab
                             }
@@ -243,9 +236,6 @@ object HomeScreen : Screen() {
 
                         if (it is Tab.AnimeLib && it.animeIdToOpen != null) {
                             navigator.push(AnimeScreen(it.animeIdToOpen))
-                        }
-                        if (it is Tab.Library && it.mangaIdToOpen != null) {
-                            navigator.push(MangaScreen(it.mangaIdToOpen))
                         }
                         if (it is Tab.More && it.toDownloads) {
                             navigator.push(DownloadsTab)
