@@ -94,7 +94,7 @@ data object BrowseTab : Tab {
                     animeSourcesTab(),
                     animeExtensionsTabContent,
                     migrateAnimeSourceTab(),
-                    )
+                )
 
             feedTabInFront ->
                 listOf(
@@ -106,7 +106,7 @@ data object BrowseTab : Tab {
                     animeSourcesTab(),
                     animeExtensionsTabContent,
                     migrateAnimeSourceTab(),
-                    )
+                )
 
             else ->
                 listOf(
@@ -118,7 +118,7 @@ data object BrowseTab : Tab {
                     ),
                     animeExtensionsTabContent,
                     migrateAnimeSourceTab(),
-                    )
+                )
             // SY <--
         }
 
