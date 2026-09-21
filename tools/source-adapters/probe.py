@@ -22,6 +22,22 @@ def fetch(url, referer=None):
     with urllib.request.urlopen(req, timeout=25) as r:
         return r.status, r.headers.get("Content-Type", ""), r.read().decode("utf-8", "replace")
 
+def fetch_embed_variant(url, mode):
+    headers = {
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    if mode == "site":
+        headers["Referer"] = BASE + "/"
+        headers["Origin"] = BASE
+    elif mode == "episode":
+        headers["Referer"] = EPISODE
+        headers["Origin"] = BASE
+
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=25) as r:
+        return r.status, r.headers.get("Content-Type", ""), r.read().decode("utf-8", "replace")
+
 def first_match(patterns, text):
     for pattern in patterns:
         m = re.search(pattern, text, re.I | re.S)
@@ -49,11 +65,35 @@ def probe_media_endpoint(url):
         return f"error={type(exc).__name__}:{exc}"
 
 def inspect_embed(url):
-    try:
-        status, content_type, page = fetch(url, EPISODE)
-    except Exception as exc:
-        return f"fetch_error={type(exc).__name__}:{exc}"
+    variants = []
+    selected_page = ""
+    selected_status = 0
+    selected_content_type = ""
 
+    for mode in ("site", "episode", "none"):
+        try:
+            status, content_type, page = fetch_embed_variant(url, mode)
+        except Exception as exc:
+            variants.append(f"{mode}:error={type(exc).__name__}")
+            continue
+
+        token_present = bool(re.search(r'VIDEO_TOKEN\s*=\s*["\'][^"\']+["\']', page, re.I))
+        source_present = bool(re.search(r'<source\b[^>]+src=', page, re.I))
+        relative_stream = "/stream/" in page
+        fetch_call = "fetch(" in page
+        xhr = "XMLHttpRequest" in page
+        meta_refresh = bool(re.search(r'<meta[^>]+http-equiv=["\']?refresh', page, re.I))
+        variants.append(
+            f"{mode}:http={status},len={len(page)},token={token_present},source={source_present},"
+            f"stream_path={relative_stream},fetch={fetch_call},xhr={xhr},refresh={meta_refresh}"
+        )
+
+        if mode == "site":
+            selected_page = page
+            selected_status = status
+            selected_content_type = content_type
+
+    page = selected_page
     direct = []
     for pattern in [
         r'https?://[^"\'\\\s<>]+?\.m3u8(?:\?[^"\'\\\s<>]*)?',
@@ -83,9 +123,10 @@ def inspect_embed(url):
         stream_probe = probe_media_endpoint(f"https://my.1anime.site/stream/{token_match.group(1)}")
 
     return (
-        f"http={status}, content_type={content_type}, title={title!r}, "
+        f"selected_http={selected_status}, content_type={selected_content_type}, title={title!r}, "
         f"direct_media={len(direct)}, video_token={has_video_token}, source_tag={has_source_tag}, "
-        f"stream_probe={stream_probe}, markers={markers}, script_hosts={script_hosts[:8]}"
+        f"stream_probe={stream_probe}, markers={markers}, script_hosts={script_hosts[:8]}, "
+        f"variants={variants}"
     )
 
 def probe_aniwatch():
