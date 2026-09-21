@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.en.aniwatch
 
 import android.util.Base64
 import aniyomi.lib.omniembedextractor.OmniEmbedExtractor
+import aniyomi.lib.m3u8server.M3u8Integration
 import aniyomi.lib.playlistutils.PlaylistUtils
 import aniyomi.lib.rapidcloudextractor.RapidCloudExtractor
 import aniyomi.lib.vidsrcextractor.VidsrcExtractor
@@ -39,6 +40,7 @@ class AniWatch : AnimeHttpLegacySource() {
     private val omni by lazy { OmniEmbedExtractor(client, headers) }
     private val rapidCloud by lazy { RapidCloudExtractor(client, headers, preferences) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val m3u8Integration by lazy { M3u8Integration(client) }
     private val megaPlayResolver by lazy { MegaPlayWebViewResolver(headers) }
     private val megaPlayApiResolver by lazy { MegaPlayApiResolver(client, headers) }
 
@@ -227,7 +229,21 @@ class AniWatch : AnimeHttpLegacySource() {
             ServerLink(name, type, link)
         }.distinctBy { it.link }
 
-        return links.parallelCatchingFlatMap(::extractServer).distinctBy { it.videoUrl }
+        val videos = links.parallelCatchingFlatMap(::extractServer).distinctBy { it.videoUrl }
+
+        return m3u8Integration.processVideoList(videos).map { video ->
+            val originalUrl = video.url
+            if (originalUrl.contains(".m3u8", ignoreCase = true)) {
+                video.copy(
+                    mpvArgs = video.mpvArgs.filterNot { it.first == "demuxer-lavf-o" } +
+                        ("demuxer-lavf-o" to "force_mpegts=1"),
+                    ffmpegStreamArgs = video.ffmpegStreamArgs.filterNot { it.first == "force_mpegts" } +
+                        ("force_mpegts" to "1"),
+                )
+            } else {
+                video
+            }
+        }
     }
 
     private suspend fun extractServer(source: ServerLink): List<Video> {

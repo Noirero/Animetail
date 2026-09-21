@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.id.nekopoi
 
 import aniyomi.lib.doodextractor.DoodExtractor
+import aniyomi.lib.m3u8server.M3u8Integration
 import aniyomi.lib.playlistutils.PlaylistUtils
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
@@ -40,6 +41,7 @@ class Nekopoi : AnimeHttpLegacySource() {
     private val vidHide by lazy { VidHideExtractor(client, headers) }
     private val universal by lazy { UniversalExtractor(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override fun headersBuilder(): Headers.Builder =
         super.headersBuilder().set("Referer", "$baseUrl/")
@@ -176,23 +178,43 @@ class Nekopoi : AnimeHttpLegacySource() {
                 val href = card.attr("abs:href").ifBlank { card.attr("href") }
                 val title = card.selectFirst(".nk-episode-card-title")?.text().orEmpty()
                 val badge = card.selectFirst(".nk-episode-badge")?.text().orEmpty()
-                val number = episodeNumber(badge, title, (index + 1).toFloat())
+                val number = episodeNumber(badge, title, href, (index + 1).toFloat())
+                val variant = episodeVariant(badge, title, href, card.text())
+
                 SEpisode.create().apply {
                     url = cleanUrlWithoutDomain(href)
                     episode_number = number
-                    name = "Episode " + cleanNumber(number)
+                    name = buildString {
+                        append("Episode ")
+                        append(cleanNumber(number))
+                        variant?.let {
+                            append(" • ")
+                            append(it)
+                        }
+                    }
                 }
-            }.sortedByDescending { it.episode_number }
+            }.sortedWith(
+                compareBy<SEpisode> { it.episode_number }
+                    .thenBy { episodeVariantRank(it.name) },
+            )
         }
 
         val current = response.request.url.toString()
         val title = doc.selectFirst(".nk-post-header h1, h1")?.text().orEmpty()
-        val number = episodeNumber("", title, 1F)
+        val number = episodeNumber("", title, current, 1F)
+        val variant = episodeVariant(title, current)
         return listOf(
             SEpisode.create().apply {
                 url = cleanUrlWithoutDomain(current)
                 episode_number = number
-                name = "Episode " + cleanNumber(number)
+                name = buildString {
+                    append("Episode ")
+                    append(cleanNumber(number))
+                    variant?.let {
+                        append(" • ")
+                        append(it)
+                    }
+                }
             },
         )
     }
@@ -212,8 +234,10 @@ class Nekopoi : AnimeHttpLegacySource() {
             ?: streamingServers.lastOrNull()
             ?: return emptyList()
 
-        return listOf(selected).parallelCatchingFlatMapBlocking { extractVideo(it) }
+        val videos = listOf(selected).parallelCatchingFlatMapBlocking { extractVideo(it) }
             .distinctBy { it.videoUrl }
+
+        return m3u8Integration.processVideoList(videos)
     }
 
     private fun isAdIframe(url: String): Boolean {
@@ -300,6 +324,10 @@ class Nekopoi : AnimeHttpLegacySource() {
         val directUrl = document.selectFirst("video[src], source[src]")?.let {
             it.attr("abs:src").ifBlank { it.attr("src") }
         }?.takeIf(String::isNotBlank)
+            ?: document.selectFirst(
+                "meta[property=og:video], meta[property=og:video:url], " +
+                    "meta[name=twitter:player:stream]",
+            )?.attr("content")?.takeIf(String::isNotBlank)
             ?: DISCORD_MEDIA_REGEX.find(html)?.value
 
         if (directUrl.isNullOrBlank()) return emptyList()
@@ -402,11 +430,29 @@ class Nekopoi : AnimeHttpLegacySource() {
             .none { it in t || it.replace(" ", "-") in u }
     }
 
-    private fun episodeNumber(badge: String, title: String, fallback: Float): Float {
-        val regex = Regex("""(?:Ep|Episode)\s*([0-9]+(?:\.[0-9]+)?)""", RegexOption.IGNORE_CASE)
-        return regex.find(badge)?.groupValues?.getOrNull(1)?.toFloatOrNull()
-            ?: regex.find(title)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+    private fun episodeNumber(badge: String, title: String, href: String, fallback: Float): Float {
+        val labeled = Regex("""(?:Ep|Episode)\s*[-_:]?\s*([0-9]+(?:\.[0-9]+)?)""", RegexOption.IGNORE_CASE)
+        val hrefNumber = Regex("""(?:episode|ep)[-_ ]*([0-9]+(?:\.[0-9]+)?)""", RegexOption.IGNORE_CASE)
+
+        return labeled.find(badge)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+            ?: labeled.find(title)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+            ?: hrefNumber.find(href)?.groupValues?.getOrNull(1)?.toFloatOrNull()
             ?: fallback
+    }
+
+    private fun episodeVariant(vararg values: String): String? {
+        val text = values.joinToString(" ").lowercase()
+        return when {
+            "uncensored" in text || "uncen" in text -> "Uncensored"
+            "censored" in text || Regex("""\bcen(?:sored)?\b""").containsMatchIn(text) -> "Censored"
+            else -> null
+        }
+    }
+
+    private fun episodeVariantRank(name: String): Int = when {
+        name.contains("Uncensored", true) -> 0
+        name.contains("Censored", true) -> 1
+        else -> 2
     }
 
     private fun extractBgUrl(style: String): String? =
