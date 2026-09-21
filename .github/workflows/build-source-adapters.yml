@@ -47,10 +47,17 @@ jobs:
       - name: Probe live endpoints
         run: python3 tools/source-adapters/probe.py
 
-      - name: Build extension APKs
+      - name: Apply upstream Kotlin formatting
         working-directory: anime-extensions
         run: |
           chmod +x gradlew
+          ./gradlew --no-daemon \
+            :src:en:aniwatch:spotlessApply \
+            :src:id:nekopoi:spotlessApply
+
+      - name: Build extension APKs
+        working-directory: anime-extensions
+        run: |
           ./gradlew --no-daemon \
             :src:en:aniwatch:assembleDebug \
             :src:id:nekopoi:assembleDebug \
