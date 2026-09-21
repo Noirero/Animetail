@@ -4,7 +4,7 @@ import json
 import re
 import sys
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145.0 Safari/537.36"
 BASE = "https://aniwatch.co.at"
@@ -47,11 +47,13 @@ def first_match(patterns, text):
 
 def probe_media_endpoint(url):
     try:
+        parsed = urlparse(url)
+        referer = f"{parsed.scheme}://{parsed.netloc}/"
         req = urllib.request.Request(
             url,
             headers={
                 "User-Agent": UA,
-                "Referer": "https://my.1anime.site/",
+                "Referer": referer,
                 "Range": "bytes=0-0",
                 "Accept": "*/*",
             },
@@ -121,6 +123,10 @@ def inspect_embed(url):
     stream_probe = "not_available"
     if token_match:
         stream_probe = probe_media_endpoint(f"https://my.1anime.site/stream/{token_match.group(1)}")
+    else:
+        relative_match = re.search(r'["\'](/stream/[^"\'\s<>]+)["\']', page, re.I)
+        if relative_match:
+            stream_probe = probe_media_endpoint(urljoin(url, relative_match.group(1)))
 
     return (
         f"selected_http={selected_status}, content_type={selected_content_type}, title={title!r}, "
