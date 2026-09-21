@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import base64
+import hashlib
+import hmac
 import json
 import re
+import subprocess
 import sys
 import urllib.request
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
@@ -66,6 +69,96 @@ def probe_media_endpoint(url):
     except Exception as exc:
         return f"error={type(exc).__name__}:{exc}"
 
+def build_megaplay_media_url(enc):
+    key = b"i?LMTAx0Q6,:}50U" + b"\x00" * (32 - len(b"i?LMTAx0Q6,:}50U"))
+    iv = b"W0;27ToaUpl_P%'c"
+    token_secret = b"MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s"
+
+    raw = enc.replace("-", "+").replace("_", "/")
+    raw += "=" * ((4 - len(raw) % 4) % 4)
+    encrypted = base64.b64decode(raw)
+    proc = subprocess.run(
+        ["openssl", "enc", "-aes-256-cbc", "-d", "-K", key.hex(), "-iv", iv.hex()],
+        input=encrypted,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    decoded = proc.stdout.decode("utf-8", "replace")
+    match = re.search(r'"file"\s*:\s*"([^"]+)"', decoded)
+    if not match:
+        return None
+    media_url = match.group(1)
+
+    if re.search(r"[?&]token=", media_url, re.I):
+        return media_url
+    path_match = re.search(r"/([a-f0-9]{32})/([a-f0-9]{32})/", media_url, re.I)
+    if not path_match:
+        return media_url
+
+    expiry = int(__import__("time").time()) + 90
+    path_key = f"{path_match.group(1).lower()}/{path_match.group(2).lower()}"
+    payload = f"{expiry}|{path_key}".encode()
+    sig = base64.urlsafe_b64encode(hmac.new(token_secret, payload, hashlib.sha256).digest()).decode().rstrip("=")
+    payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    sep = "&" if "?" in media_url else "?"
+    return f"{media_url}{sep}token={payload_b64}.{sig}"
+
+def unpack_packed_js(html):
+    packed = re.search(
+        r"\}\s*\(\s*'((?:[^'\\]|\\.)*+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'\s*\.split\s*\(\s*'\|'\s*\)",
+        html,
+        re.I | re.S,
+    )
+    if not packed:
+        return None
+
+    payload = packed.group(1).replace("\\/", "/").replace("\\'", "'").replace("\\\\", "\\")
+    radix = int(packed.group(2))
+    count = int(packed.group(3))
+    dictionary = packed.group(4).split("|")
+
+    alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    def unbase(word):
+        value = 0
+        for ch in word:
+            idx = alphabet.find(ch)
+            if idx < 0 or idx >= radix:
+                return None
+            value = value * radix + idx
+        return value
+
+    def repl(match):
+        word = match.group(0)
+        idx = unbase(word)
+        if idx is None or idx >= count or idx >= len(dictionary):
+            return word
+        return dictionary[idx] or word
+
+    return re.sub(r"\b\w+\b", repl, payload)
+
+def probe_with_headers(url, referer, origin=None):
+    try:
+        req_headers = {
+            "User-Agent": UA,
+            "Referer": referer,
+            "Range": "bytes=0-0",
+            "Accept": "*/*",
+        }
+        if origin:
+            req_headers["Origin"] = origin
+        req = urllib.request.Request(url, headers=req_headers)
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return (
+                f"http={r.status},content_type={r.headers.get('Content-Type', '')},"
+                f"final_host={urlparse(r.geturl()).hostname}"
+            )
+    except Exception as exc:
+        return f"error={type(exc).__name__}:{exc}"
+
 def inspect_megaplay(iframe_url, referer):
     try:
         req = urllib.request.Request(
@@ -110,10 +203,32 @@ def inspect_megaplay(iframe_url, referer):
         source = data.get("sources")
         source_kind = type(source).__name__
         source_text = json.dumps(source) if source is not None else ""
+        media_url = None
+        enc = data.get("enc") or ""
+        if enc:
+            media_url = build_megaplay_media_url(enc)
+        if not media_url and source is not None:
+            if isinstance(source, dict):
+                media_url = source.get("file")
+            elif isinstance(source, list) and source:
+                first = source[0]
+                media_url = first.get("file") if isinstance(first, dict) else str(first)
+            elif isinstance(source, str):
+                media_url = source
+        media_probe = "not_available"
+        media_kind = "none"
+        if media_url:
+            media_kind = "m3u8" if ".m3u8" in media_url.lower() else "other"
+            media_probe = probe_with_headers(
+                media_url,
+                f"{parsed.scheme}://{parsed.netloc}/",
+                f"{parsed.scheme}://{parsed.netloc}",
+            )
         return (
             f"page_http={page_status},media_id={media_id},api_http={api_status},"
-            f"keys={sorted(data.keys())},enc_len={len(data.get('enc') or '')},"
-            f"source_kind={source_kind},source_has_m3u8={'.m3u8' in source_text}"
+            f"keys={sorted(data.keys())},enc_len={len(enc)},source_kind={source_kind},"
+            f"source_has_m3u8={'.m3u8' in source_text},decrypt_ok={bool(media_url)},"
+            f"media_kind={media_kind},media_probe={media_probe}"
         )
     except Exception as exc:
         return f"error={type(exc).__name__}:{exc}"
@@ -328,10 +443,36 @@ def probe_nekopoi():
                 try:
                     frame_status, _, frame_html = fetch(src, target)
                     frame_host = urlparse(src).hostname
+                    packed_present = 'eval(function(p,a,c,k,e' in frame_html
+                    resolved_probe = "none"
+                    if frame_host and "streampoi" in frame_host:
+                        unpacked = unpack_packed_js(frame_html)
+                        stream_match = re.search(r'https?://[^"\'\\\\\s]+\.m3u8[^"\'\\\\\s]*', unpacked or "", re.I)
+                        if stream_match:
+                            stream_url = stream_match.group(0).replace("\\/", "/")
+                            resolved_probe = probe_with_headers(
+                                stream_url,
+                                src,
+                                f"{urlparse(src).scheme}://{urlparse(src).netloc}",
+                            )
+                        else:
+                            resolved_probe = "unpack_no_m3u8"
+                    elif frame_host and "playmogo" in frame_host:
+                        video_id = urlparse(src).path.rstrip("/").split("/")[-1]
+                        mirrors = []
+                        for domain in ("dood.to", "d000d.com", "doodstream.com"):
+                            try:
+                                mirror_url = f"https://{domain}/e/{video_id}"
+                                _, _, mirror_html = fetch(mirror_url, target)
+                                mirrors.append(f"{domain}:pass_md5={'/pass_md5/' in mirror_html}")
+                            except Exception as exc:
+                                mirrors.append(f"{domain}:error={type(exc).__name__}")
+                        resolved_probe = "|".join(mirrors)
                     iframe_debug.append(
                         f"{frame_host}:http={frame_status},pass_md5={'/pass_md5/' in frame_html},"
-                        f"packed={'eval(function(p,a,c,k,e' in frame_html},"
-                        f"m3u8={'.m3u8' in frame_html},file_field={bool(re.search(r'[\"\']?file[\"\']?\\s*:', frame_html, re.I))}"
+                        f"packed={packed_present},m3u8={'.m3u8' in frame_html},"
+                        f"file_field={bool(re.search(r'[\"\']?file[\"\']?\\s*:', frame_html, re.I))},"
+                        f"resolved={resolved_probe}"
                     )
                 except Exception as exc:
                     iframe_debug.append(f"{urlparse(src).hostname}:error={type(exc).__name__}")
