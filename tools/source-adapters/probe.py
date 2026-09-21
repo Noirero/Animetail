@@ -364,6 +364,56 @@ def probe_aniwatch():
     )
     print(f"AniWatch embed probe: host={urlparse(links[0]).hostname}, {inspect_embed(links[0])}")
 
+def inspect_server_frame(url, referer):
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": UA,
+                "Referer": referer,
+                "Accept": "text/html,application/xhtml+xml,video/*,*/*;q=0.8",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=25) as r:
+            status = r.status
+            content_type = r.headers.get("Content-Type", "")
+            final_url = r.geturl()
+            body = r.read(131072)
+
+        parsed = urlparse(final_url)
+        if content_type.lower().startswith("video/"):
+            return (
+                f"http={status},type={content_type},final_host={parsed.hostname},"
+                f"final_ext={parsed.path.rsplit('.', 1)[-1] if '.' in parsed.path else 'none'},direct_video=True"
+            )
+
+        page = body.decode("utf-8", "replace")
+        title = first_match([r'<title[^>]*>(.*?)</title>'], page)
+        media = first_match([
+            r'<video[^>]+src=["\']([^"\']+)["\']',
+            r'<source[^>]+src=["\']([^"\']+)["\']',
+            r'<meta[^>]+(?:property|name)=["\'](?:og:video(?::url)?|twitter:player:stream)["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:video(?::url)?|twitter:player:stream)["\']',
+            r'https?://[^"\'\\\s<>]+?\.m3u8(?:\?[^"\'\\\s<>]*)?',
+            r'https?://[^"\'\\\s<>]+?\.(?:mp4|webm)(?:\?[^"\'\\\s<>]*)?',
+        ], page)
+        media_host = urlparse(urljoin(final_url, media)).hostname if media else None
+        script_hosts = []
+        for src in re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', page, re.I):
+            absolute = urljoin(final_url, src)
+            host = urlparse(absolute).hostname
+            if host and host not in script_hosts:
+                script_hosts.append(host)
+
+        return (
+            f"http={status},type={content_type},final_host={parsed.hostname},"
+            f"final_path={parsed.path[:120]},title={title!r},media_present={bool(media)},"
+            f"media_host={media_host},video_tag={'<video' in page.lower()},"
+            f"source_tag={'<source' in page.lower()},scripts={script_hosts[:6]}"
+        )
+    except Exception as exc:
+        return f"error={type(exc).__name__}:{exc}"
+
 def probe_nekopoi():
     try:
         base = "https://nekopoi.care/"
@@ -432,14 +482,18 @@ def probe_nekopoi():
             cover_probe = f"error={type(exc).__name__}"
 
         iframe_debug = []
+        streaming_iframes = []
         if candidate and not challenge and 'target' in locals():
-            for src in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', player_page, re.I)[:4]:
+            for src in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', player_page, re.I)[:8]:
                 if src.startswith("//"):
                     src = "https:" + src
                 elif src.startswith("/"):
                     src = urljoin(target, src)
                 if not src.startswith("http"):
                     continue
+                frame_host_for_order = (urlparse(src).hostname or "").lower()
+                if not any(x in frame_host_for_order for x in ["a-ads.", "doubleclick.", "googlesyndication.", "adservice."]):
+                    streaming_iframes.append(src)
                 try:
                     frame_status, _, frame_html = fetch(src, target)
                     frame_host = urlparse(src).hostname
@@ -477,12 +531,15 @@ def probe_nekopoi():
                 except Exception as exc:
                     iframe_debug.append(f"{urlparse(src).hostname}:error={type(exc).__name__}")
 
+        server3_url = streaming_iframes[2] if len(streaming_iframes) > 2 else None
+        server3_probe = inspect_server_frame(server3_url, target) if server3_url else "not_available"
+
         print(
             f"Nekopoi reachability: HTTP {status}, cloudflare_challenge={challenge}, "
             f"listing_markers={listing_markers}, detail_episode_links={detail_episode_links}, "
             f"final_kind={final_kind}, player_present={player_present}, iframe_hosts={iframe_hosts[:8]}, "
-            f"server3_host={(iframe_hosts[3] if len(iframe_hosts) > 3 and iframe_hosts[0] == 'ad.a-ads.com' else (iframe_hosts[2] if len(iframe_hosts) > 2 else None))}, "
-            f"cover_probe={cover_probe}, iframe_debug={iframe_debug}"
+            f"server3_host={urlparse(server3_url).hostname if server3_url else None}, "
+            f"server3_probe={server3_probe}, cover_probe={cover_probe}, iframe_debug={iframe_debug}"
         )
     except Exception as exc:
         print(f"Nekopoi reachability warning: {exc}")
