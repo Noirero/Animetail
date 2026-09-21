@@ -1,0 +1,83 @@
+name: Build source adapters
+
+on:
+  push:
+    branches:
+      - feat/source-adapter
+    paths:
+      - "tools/source-adapters/**"
+      - ".github/workflows/build-source-adapters.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-adapters-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Animetail
+        uses: actions/checkout@v4
+
+      - name: Checkout anime extension toolchain
+        uses: actions/checkout@v4
+        with:
+          repository: yuzono/anime-extensions
+          ref: master
+          path: anime-extensions
+          persist-credentials: false
+
+      - name: Install source overlays
+        run: |
+          rm -rf anime-extensions/src/en/aniwatch anime-extensions/src/id/nekopoi
+          cp -R tools/source-adapters/src/en/aniwatch anime-extensions/src/en/
+          cp -R tools/source-adapters/src/id/nekopoi anime-extensions/src/id/
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Probe live endpoints
+        run: python3 tools/source-adapters/probe.py
+
+      - name: Apply upstream Kotlin formatting
+        working-directory: anime-extensions
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon \
+            :src:en:aniwatch:spotlessApply \
+            :src:id:nekopoi:spotlessApply
+
+      - name: Build extension APKs
+        working-directory: anime-extensions
+        run: |
+          ./gradlew --no-daemon \
+            :src:en:aniwatch:assembleDebug \
+            :src:id:nekopoi:assembleDebug \
+            --stacktrace
+
+      - name: Collect APKs
+        run: |
+          mkdir -p source-adapter-apks
+          find anime-extensions/src/en/aniwatch/build/outputs -type f -name "*.apk" -exec cp {} source-adapter-apks/ \;
+          find anime-extensions/src/id/nekopoi/build/outputs -type f -name "*.apk" -exec cp {} source-adapter-apks/ \;
+          test "$(find source-adapter-apks -type f -name '*.apk' | wc -l)" -ge 2
+          ls -lh source-adapter-apks
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: animetail-source-adapters
+          path: source-adapter-apks/*.apk
+          if-no-files-found: error
