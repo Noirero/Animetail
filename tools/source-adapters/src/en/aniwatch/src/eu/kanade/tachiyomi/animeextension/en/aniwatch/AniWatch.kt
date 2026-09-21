@@ -261,6 +261,7 @@ class AniWatch : AnimeHttpLegacySource() {
                 ?.let { URI(embedUrl).resolve(it).toString() }
             ?: Regex("""["\u0027](https?://[^"\u0027]*/stream/[^"\u0027\s<>]+)["\u0027]""", RegexOption.IGNORE_CASE)
                 .find(html)?.groupValues?.getOrNull(1)
+            ?: embedUrl.takeIf { "/play/" in it }?.replaceFirst("/play/", "/stream/")
             ?: return emptyList()
 
         val streamOrigin = streamUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: embedUrl
