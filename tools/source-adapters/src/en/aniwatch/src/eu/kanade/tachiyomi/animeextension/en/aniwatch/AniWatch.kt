@@ -40,6 +40,7 @@ class AniWatch : AnimeHttpLegacySource() {
     private val rapidCloud by lazy { RapidCloudExtractor(client, headers, preferences) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val megaPlayResolver by lazy { MegaPlayWebViewResolver(headers) }
+    private val megaPlayApiResolver by lazy { MegaPlayApiResolver(client, headers) }
 
     override fun headersBuilder(): Headers.Builder =
         super.headersBuilder().set("Referer", "$baseUrl/")
@@ -179,12 +180,10 @@ class AniWatch : AnimeHttpLegacySource() {
                     .find(element.text())?.groupValues?.getOrNull(1)?.toFloatOrNull()
                 ?: return@mapNotNull null
             if (href.isBlank()) return@mapNotNull null
-            val title = element.attr("title").takeIf(String::isNotBlank)
-                ?: element.selectFirst(".ep-name, .film-name")?.text()
             SEpisode.create().apply {
                 url = id + "::" + cleanUrlWithoutDomain(href)
                 episode_number = number
-                name = "Episode " + cleanNumber(number) + if (title.isNullOrBlank()) "" else ": " + title
+                name = "Episode " + cleanNumber(number)
             }
         }.distinctBy { it.url.substringBefore("::") }.sortedByDescending { it.episode_number }
 
@@ -266,33 +265,26 @@ class AniWatch : AnimeHttpLegacySource() {
         if (iframeUrl != null) {
             val iframeHost = iframeUrl.toHttpUrlOrNull()?.host?.lowercase().orEmpty()
             if ("megaplay." in iframeHost) {
-                val resolved = megaPlayResolver.resolve(iframeUrl, embedUrl)
-                if (resolved != null) {
-                    val mediaUrl = resolved.url
-                    val mediaHeaders = resolved.headers.newBuilder().apply {
-                        if (get("Referer").isNullOrBlank()) set("Referer", iframeUrl)
-                    }.build()
+                val apiResolved = megaPlayApiResolver.resolve(iframeUrl, embedUrl)
+                if (apiResolved != null) {
+                    val videos = videosFromMegaPlayMedia(
+                        apiResolved.url,
+                        apiResolved.headers,
+                        iframeUrl,
+                        source,
+                    )
+                    if (videos.isNotEmpty()) return videos
+                }
 
-                    if (mediaUrl.contains(".m3u8", ignoreCase = true)) {
-                        return playlistUtils.extractFromHls(
-                            playlistUrl = mediaUrl,
-                            videoNameGen = { quality -> source.type + " - " + source.name + " - " + quality },
-                            referer = iframeUrl,
-                            masterHeaders = mediaHeaders,
-                            videoHeaders = mediaHeaders,
-                        )
-                    }
-
-                    if (mediaUrl.substringBefore("?").endsWith(".mp4", ignoreCase = true)) {
-                        return listOf(
-                            Video(
-                                mediaUrl,
-                                source.type + " - " + source.name,
-                                mediaUrl,
-                                headers = mediaHeaders,
-                            ),
-                        )
-                    }
+                val webResolved = megaPlayResolver.resolve(iframeUrl, embedUrl)
+                if (webResolved != null) {
+                    val videos = videosFromMegaPlayMedia(
+                        webResolved.url,
+                        webResolved.headers,
+                        iframeUrl,
+                        source,
+                    )
+                    if (videos.isNotEmpty()) return videos
                 }
             }
 
@@ -328,6 +320,40 @@ class AniWatch : AnimeHttpLegacySource() {
                 headers = streamHeaders,
             ),
         )
+    }
+
+    private fun videosFromMegaPlayMedia(
+        mediaUrl: String,
+        capturedHeaders: Headers,
+        iframeUrl: String,
+        source: ServerLink,
+    ): List<Video> {
+        val mediaHeaders = capturedHeaders.newBuilder().apply {
+            if (get("Referer").isNullOrBlank()) set("Referer", iframeUrl)
+        }.build()
+
+        if (mediaUrl.contains(".m3u8", ignoreCase = true)) {
+            return playlistUtils.extractFromHls(
+                playlistUrl = mediaUrl,
+                videoNameGen = { quality -> source.type + " - " + source.name + " - " + quality },
+                referer = iframeUrl,
+                masterHeaders = mediaHeaders,
+                videoHeaders = mediaHeaders,
+            )
+        }
+
+        if (mediaUrl.substringBefore("?").endsWith(".mp4", ignoreCase = true)) {
+            return listOf(
+                Video(
+                    mediaUrl,
+                    source.type + " - " + source.name,
+                    mediaUrl,
+                    headers = mediaHeaders,
+                ),
+            )
+        }
+
+        return emptyList()
     }
 
     private fun decodeHash(hash: String): String? {

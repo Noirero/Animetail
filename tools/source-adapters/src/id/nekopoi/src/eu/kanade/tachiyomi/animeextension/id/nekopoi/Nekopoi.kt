@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.id.nekopoi
 
 import aniyomi.lib.doodextractor.DoodExtractor
+import aniyomi.lib.playlistutils.PlaylistUtils
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
 import aniyomi.lib.universalextractor.UniversalExtractor
@@ -10,7 +11,9 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.lib.jsunpacker.JsUnpacker
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import okhttp3.Headers
@@ -35,6 +38,7 @@ class Nekopoi : AnimeHttpLegacySource() {
     private val streamWish by lazy { StreamWishExtractor(client, headers) }
     private val vidHide by lazy { VidHideExtractor(client, headers) }
     private val universal by lazy { UniversalExtractor(client) }
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     override fun headersBuilder(): Headers.Builder =
         super.headersBuilder().set("Referer", "$baseUrl/")
@@ -142,6 +146,8 @@ class Nekopoi : AnimeHttpLegacySource() {
             .filter(String::isNotBlank)
             .distinct()
             .joinToString()
+        val producers = metadataValue(doc, "Produser", "Producers", "Producer")
+        val actresses = metadataValue(doc, "Actress", "Actresses", "Artist", "Artis")
 
         return SAnime.create().apply {
             title = cleanTitle(rawTitle)
@@ -151,9 +157,8 @@ class Nekopoi : AnimeHttpLegacySource() {
                     ?.let { it.attr("abs:src").ifBlank { it.attr("src") } }
             description = synopsis.distinct().joinToString("\n\n").takeIf(String::isNotBlank)
             genre = genres.takeIf(String::isNotBlank)
-            author = doc.select(".nk-series-meta-list li:contains(Produser) a, .nk-series-meta-list li:contains(Producers) a")
-                .joinToString { it.text() }
-                .takeIf(String::isNotBlank)
+            author = producers
+            artist = actresses
             status = when {
                 metaText.contains("completed", true) || metaText.contains("tamat", true) -> SAnime.COMPLETED
                 metaText.contains("ongoing", true) || metaText.contains("berjalan", true) -> SAnime.ONGOING
@@ -212,22 +217,31 @@ class Nekopoi : AnimeHttpLegacySource() {
             return listOf(Video(url, "Direct", url, headers = headers))
         }
 
-        if ("playmogo" in lower || "dood" in lower || "d000d" in lower || "ds2play" in lower) {
-            val direct = dood.videosFromUrl(url)
+        if ("playmogo" in lower) {
+            val direct = extractPlaymogo(url)
             if (direct.isNotEmpty()) return direct
 
-            if ("playmogo" in lower) {
-                val id = url.substringAfterLast("/").substringBefore("?").substringBefore("#")
-                if (id.isNotBlank()) {
-                    val mirrored = dood.videosFromUrl("https://d000d.com/e/$id")
-                    if (mirrored.isNotEmpty()) return mirrored
-                }
+            val id = url.substringAfterLast("/").substringBefore("?").substringBefore("#")
+            if (id.isNotBlank()) {
+                val mirrored = dood.videosFromUrl("https://d000d.com/e/$id")
+                if (mirrored.isNotEmpty()) return mirrored
             }
-
             return webViewFallback(url)
         }
 
-        if ("streamwish" in lower || "wishembed" in lower || "awish" in lower || "streampoi" in lower) {
+        if ("dood" in lower || "d000d" in lower || "ds2play" in lower) {
+            val direct = dood.videosFromUrl(url)
+            return direct.ifEmpty { webViewFallback(url) }
+        }
+
+        if ("streampoi" in lower) {
+            val direct = extractStreampoi(url)
+            if (direct.isNotEmpty()) return direct
+            val generic = streamWish.videosFromUrl(url)
+            return generic.ifEmpty { webViewFallback(url) }
+        }
+
+        if ("streamwish" in lower || "wishembed" in lower || "awish" in lower) {
             val direct = streamWish.videosFromUrl(url)
             return direct.ifEmpty { webViewFallback(url) }
         }
@@ -239,6 +253,75 @@ class Nekopoi : AnimeHttpLegacySource() {
 
         return webViewFallback(url)
     }
+
+    private suspend fun extractPlaymogo(url: String): List<Video> = runCatching {
+        val uri = URI(url)
+        val origin = "${uri.scheme}://${uri.host}"
+        val pageHeaders = headers.newBuilder()
+            .set("Referer", "$baseUrl/")
+            .build()
+        val html = client.newCall(GET(url, pageHeaders)).awaitSuccess().body.string()
+        val passPath = PASS_MD5_REGEX.find(html)?.value ?: return emptyList()
+        val token = passPath.substringAfterLast("/")
+        if (token.isBlank()) return emptyList()
+
+        val passHeaders = headers.newBuilder()
+            .set("Referer", url)
+            .set("X-Requested-With", "XMLHttpRequest")
+            .build()
+        val mediaBase = client.newCall(GET(origin + passPath, passHeaders))
+            .awaitSuccess().body.string().trim()
+        if (mediaBase.isBlank()) return emptyList()
+
+        val nonce = buildString {
+            repeat(10) { append(NONCE_CHARS.random()) }
+        }
+        val expiry = System.currentTimeMillis()
+        val videoUrl = "$mediaBase$nonce?token=$token&expiry=$expiry"
+        val mediaHeaders = headers.newBuilder()
+            .set("Referer", "$origin/")
+            .set("Origin", origin)
+            .build()
+
+        listOf(Video(videoUrl, "Playmogo", videoUrl, headers = mediaHeaders))
+    }.getOrDefault(emptyList())
+
+    private suspend fun extractStreampoi(url: String): List<Video> = runCatching {
+        val uri = URI(url)
+        val origin = "${uri.scheme}://${uri.host}"
+        val pageHeaders = headers.newBuilder()
+            .set("Referer", "$baseUrl/")
+            .build()
+        val html = client.newCall(GET(url, pageHeaders)).awaitSuccess().body.string()
+
+        var mediaUrl = FILE_URL_REGEX.find(html)?.groupValues?.getOrNull(1)
+        if (mediaUrl.isNullOrBlank()) {
+            val unpacked = JsUnpacker.unpackAndCombine(html)
+            mediaUrl = unpacked?.let { FILE_URL_REGEX.find(it)?.groupValues?.getOrNull(1) }
+                ?: unpacked?.let { M3U8_REGEX.find(it)?.value }
+        }
+        if (mediaUrl.isNullOrBlank()) {
+            mediaUrl = M3U8_REGEX.find(html)?.value
+        }
+        val streamUrl = mediaUrl?.replace("\\/", "/") ?: return emptyList()
+
+        val mediaHeaders = headers.newBuilder()
+            .set("Referer", url)
+            .set("Origin", origin)
+            .build()
+
+        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+            playlistUtils.extractFromHls(
+                playlistUrl = streamUrl,
+                videoNameGen = { quality -> "Streampoi - $quality" },
+                referer = url,
+                masterHeaders = mediaHeaders,
+                videoHeaders = mediaHeaders,
+            )
+        } else {
+            listOf(Video(streamUrl, "Streampoi", streamUrl, headers = mediaHeaders))
+        }
+    }.getOrDefault(emptyList())
 
     private fun webViewFallback(url: String): List<Video> {
         val fallbackHeaders = headers.newBuilder()
@@ -277,11 +360,42 @@ class Nekopoi : AnimeHttpLegacySource() {
         Regex("""url\(['"]?(.*?)['"]?\)""").find(style)?.groupValues?.getOrNull(1)
 
     private fun extractThumbnail(element: Element): String? {
-        element.selectFirst("[style*='url(']")?.attr("style")?.let(::extractBgUrl)?.let { return it }
+        val tooltip = element.attr("original-title")
+            .ifBlank { element.attr("data-original-title") }
+            .ifBlank { element.attr("data-bs-original-title") }
+        TOOLTIP_IMG_REGEX.find(tooltip)?.groupValues?.getOrNull(1)
+            ?.takeIf(String::isNotBlank)
+            ?.let { return absoluteUrl(it) }
+
+        element.selectFirst("[style*='url(']")?.attr("style")?.let(::extractBgUrl)?.let { return absoluteUrl(it) }
         val image = element.selectFirst("img") ?: return null
         return image.attr("abs:data-src").ifBlank {
             image.attr("data-src").ifBlank { image.attr("abs:src").ifBlank { image.attr("src") } }
-        }.takeIf(String::isNotBlank)
+        }.takeIf(String::isNotBlank)?.let(::absoluteUrl)
+    }
+
+    private fun metadataValue(doc: Document, vararg labels: String): String? {
+        val candidates = doc.select(".nk-series-meta-list li, .konten p, .nk-post-body p, .entry-content p")
+        for (element in candidates) {
+            val text = element.text().trim()
+            val label = labels.firstOrNull { text.startsWith(it, true) } ?: continue
+            val links = element.select("a").map(Element::text).filter(String::isNotBlank).distinct()
+            val value = if (links.isNotEmpty()) {
+                links.joinToString()
+            } else {
+                text.substringAfter(":", "").ifBlank {
+                    text.removePrefix(label).trim(' ', ':', '-')
+                }.trim()
+            }
+            if (value.isNotBlank()) return value
+        }
+        return null
+    }
+
+    private fun absoluteUrl(url: String): String = when {
+        url.startsWith("http://") || url.startsWith("https://") -> url
+        url.startsWith("//") -> "https:$url"
+        else -> "$baseUrl/" + url.trimStart('/')
     }
 
     private fun cleanUrlWithoutDomain(orig: String): String = try {
@@ -295,4 +409,12 @@ class Nekopoi : AnimeHttpLegacySource() {
 
     private fun cleanNumber(value: Float): String =
         if (value % 1F == 0F) value.toInt().toString() else value.toString()
+
+    companion object {
+        private val PASS_MD5_REGEX = Regex("""/pass_md5/[^'"\s]+""", RegexOption.IGNORE_CASE)
+        private val FILE_URL_REGEX = Regex("""(?i)["']?file["']?\s*:\s*["'](https?://[^"']+)["']""")
+        private val M3U8_REGEX = Regex("""https?://[^"'\\\s]+\.m3u8[^"'\\\s]*""", RegexOption.IGNORE_CASE)
+        private val TOOLTIP_IMG_REGEX = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        private const val NONCE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    }
 }

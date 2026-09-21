@@ -4,7 +4,7 @@ import json
 import re
 import sys
 import urllib.request
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145.0 Safari/537.36"
 BASE = "https://aniwatch.co.at"
@@ -63,6 +63,58 @@ def probe_media_endpoint(url):
                 f"http={r.status}, content_type={r.headers.get('Content-Type', '')}, "
                 f"final_host={urlparse(r.geturl()).hostname}"
             )
+    except Exception as exc:
+        return f"error={type(exc).__name__}:{exc}"
+
+def inspect_megaplay(iframe_url, referer):
+    try:
+        req = urllib.request.Request(
+            iframe_url,
+            headers={
+                "User-Agent": UA,
+                "Referer": referer,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=25) as r:
+            page = r.read().decode("utf-8", "replace")
+            page_status = r.status
+
+        media_id = first_match([
+            r'data-id=["\']([^"\']+)["\']',
+            r'File\s+(\d+)',
+        ], page)
+        if not media_id:
+            return f"page_http={page_status}, media_id=missing"
+
+        parsed = urlparse(iframe_url)
+        query = parse_qs(parsed.query)
+        params = {"id": media_id}
+        if query.get("s"):
+            params["s"] = query["s"][0]
+        api_url = f"{parsed.scheme}://{parsed.netloc}/stream/getSources?{urlencode(params)}"
+        req = urllib.request.Request(
+            api_url,
+            headers={
+                "User-Agent": UA,
+                "Referer": iframe_url,
+                "Accept": "application/json,*/*",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=25) as r:
+            raw = r.read().decode("utf-8", "replace")
+            api_status = r.status
+        data = json.loads(raw)
+        source = data.get("sources")
+        source_kind = type(source).__name__
+        source_text = json.dumps(source) if source is not None else ""
+        return (
+            f"page_http={page_status},media_id={media_id},api_http={api_status},"
+            f"keys={sorted(data.keys())},enc_len={len(data.get('enc') or '')},"
+            f"source_kind={source_kind},source_has_m3u8={'.m3u8' in source_text}"
+        )
     except Exception as exc:
         return f"error={type(exc).__name__}:{exc}"
 
@@ -139,12 +191,19 @@ def inspect_embed(url):
             stream_strategy = "play_path"
             stream_probe = probe_media_endpoint(url.replace("/play/", "/stream/", 1))
 
+    iframe_match = re.search(r'<iframe[^>]+src=["\']([^"\']+)["\']', page, re.I)
+    megaplay_probe = "not_present"
+    if iframe_match:
+        iframe_url = urljoin(url, iframe_match.group(1))
+        if "megaplay." in (urlparse(iframe_url).hostname or ""):
+            megaplay_probe = inspect_megaplay(iframe_url, url)
+
     return (
         f"selected_http={selected_status}, content_type={selected_content_type}, title={title!r}, "
         f"direct_media={len(direct)}, video_token={has_video_token}, source_tag={has_source_tag}, "
         f"stream_strategy={stream_strategy}, stream_probe={stream_probe}, "
-        f"stream_context={stream_context!r}, markers={markers}, script_hosts={script_hosts[:8]}, "
-        f"variants={variants}"
+        f"megaplay_probe={megaplay_probe}, stream_context={stream_context!r}, "
+        f"markers={markers}, script_hosts={script_hosts[:8]}, variants={variants}"
     )
 
 def probe_aniwatch():
@@ -249,10 +308,39 @@ def probe_nekopoi():
             except Exception:
                 pass
 
+        cover_probe = "not_checked"
+        try:
+            _, _, popular_page = fetch("https://nekopoi.care/hentai-list/?nk_page=1", base)
+            tooltip_covers = len(re.findall(r'original-title=["\'][^"\']*<img[^>]+src=', popular_page, re.I))
+            cover_probe = f"tooltip_covers={tooltip_covers}"
+        except Exception as exc:
+            cover_probe = f"error={type(exc).__name__}"
+
+        iframe_debug = []
+        if candidate and not challenge and 'target' in locals():
+            for src in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', player_page, re.I)[:4]:
+                if src.startswith("//"):
+                    src = "https:" + src
+                elif src.startswith("/"):
+                    src = urljoin(target, src)
+                if not src.startswith("http"):
+                    continue
+                try:
+                    frame_status, _, frame_html = fetch(src, target)
+                    frame_host = urlparse(src).hostname
+                    iframe_debug.append(
+                        f"{frame_host}:http={frame_status},pass_md5={'/pass_md5/' in frame_html},"
+                        f"packed={'eval(function(p,a,c,k,e' in frame_html},"
+                        f"m3u8={'.m3u8' in frame_html},file_field={bool(re.search(r'[\"\']?file[\"\']?\\s*:', frame_html, re.I))}"
+                    )
+                except Exception as exc:
+                    iframe_debug.append(f"{urlparse(src).hostname}:error={type(exc).__name__}")
+
         print(
             f"Nekopoi reachability: HTTP {status}, cloudflare_challenge={challenge}, "
             f"listing_markers={listing_markers}, detail_episode_links={detail_episode_links}, "
-            f"final_kind={final_kind}, player_present={player_present}, iframe_hosts={iframe_hosts[:8]}"
+            f"final_kind={final_kind}, player_present={player_present}, iframe_hosts={iframe_hosts[:8]}, "
+            f"cover_probe={cover_probe}, iframe_debug={iframe_debug}"
         )
     except Exception as exc:
         print(f"Nekopoi reachability warning: {exc}")
