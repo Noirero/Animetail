@@ -201,12 +201,18 @@ class AniWatch : AnimeHttpLegacySource() {
         val links = Jsoup.parse(payload.html, baseUrl).select("[data-hash]").mapNotNull { element ->
             val link = decodeHash(element.attr("data-hash")) ?: return@mapNotNull null
             val ancestry = element.parents().joinToString(" ") { it.className() }
-            val type = when {
-                ancestry.contains("dub", true) -> "Dub"
-                ancestry.contains("raw", true) -> "Raw"
-                else -> "Sub"
+            val type = when (element.attr("data-type").lowercase()) {
+                "dub" -> "Dub"
+                "raw" -> "Raw"
+                "sub" -> "Sub"
+                else -> when {
+                    ancestry.contains("dub", true) -> "Dub"
+                    ancestry.contains("raw", true) -> "Raw"
+                    else -> "Sub"
+                }
             }
-            val name = element.attr("data-server").takeIf(String::isNotBlank)
+            val name = element.attr("data-server-name").takeIf(String::isNotBlank)
+                ?: element.attr("data-server").takeIf(String::isNotBlank)
                 ?: element.attr("title").takeIf(String::isNotBlank)
                 ?: element.text().trim().takeIf(String::isNotBlank)
                 ?: "Server"
