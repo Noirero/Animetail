@@ -230,7 +230,10 @@ class Nekopoi : AnimeHttpLegacySource() {
         }.filterNot(::isAdIframe)
             .distinct()
 
-        val selected = streamingServers.getOrNull(2)
+        val selected = streamingServers.firstOrNull { url ->
+            val host = runCatching { URI(url).host.orEmpty().lowercase() }.getOrDefault("")
+            "streampoi" in host
+        } ?: streamingServers.getOrNull(2)
             ?: streamingServers.lastOrNull()
             ?: return emptyList()
 
@@ -241,11 +244,17 @@ class Nekopoi : AnimeHttpLegacySource() {
     }
 
     private fun isAdIframe(url: String): Boolean {
-        val host = runCatching { URI(url).host.orEmpty().lowercase() }.getOrDefault("")
+        val uri = runCatching { URI(url) }.getOrNull()
+        val host = uri?.host.orEmpty().lowercase()
+        val path = uri?.path.orEmpty().lowercase()
+        val discordWidget = (host == "discordapp.com" || host == "discord.com") &&
+            path.startsWith("/widget")
+
         return host.contains("a-ads.") ||
             host.contains("doubleclick.") ||
             host.contains("googlesyndication.") ||
-            host.contains("adservice.")
+            host.contains("adservice.") ||
+            discordWidget
     }
 
     private suspend fun extractVideo(url: String): List<Video> {
