@@ -231,9 +231,11 @@ class AniWatch : AnimeHttpLegacySource() {
 
         val videos = links.parallelCatchingFlatMap(::extractServer).distinctBy { it.videoUrl }
 
-        return m3u8Integration.processVideoList(videos).map { video ->
-            val originalUrl = video.url
-            if (originalUrl.contains(".m3u8", ignoreCase = true)) {
+        val processed = m3u8Integration.processVideoList(videos)
+
+        return processed.mapIndexed { index, video ->
+            val original = videos.getOrNull(index)
+            if (original?.videoUrl?.contains(".m3u8", ignoreCase = true) == true) {
                 video.copy(
                     mpvArgs = video.mpvArgs.filterNot { it.first == "demuxer-lavf-o" } +
                         ("demuxer-lavf-o" to "force_mpegts=1"),
