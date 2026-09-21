@@ -333,13 +333,22 @@ class AniWatch : AnimeHttpLegacySource() {
         }.build()
 
         if (mediaUrl.contains(".m3u8", ignoreCase = true)) {
-            return playlistUtils.extractFromHls(
+            val videos = playlistUtils.extractFromHls(
                 playlistUrl = mediaUrl,
                 videoNameGen = { quality -> source.type + " - " + source.name + " - " + quality },
                 referer = iframeUrl,
                 masterHeaders = mediaHeaders,
                 videoHeaders = mediaHeaders,
             )
+
+            return videos.map { video ->
+                video.copy(
+                    mpvArgs = video.mpvArgs.filterNot { it.first == "demuxer-lavf-o" } +
+                        ("demuxer-lavf-o" to "force_mpegts=1"),
+                    ffmpegStreamArgs = video.ffmpegStreamArgs.filterNot { it.first == "force_mpegts" } +
+                        ("force_mpegts" to "1"),
+                )
+            }
         }
 
         if (mediaUrl.substringBefore("?").endsWith(".mp4", ignoreCase = true)) {

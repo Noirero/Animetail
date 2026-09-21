@@ -20,6 +20,7 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URI
@@ -198,16 +199,29 @@ class Nekopoi : AnimeHttpLegacySource() {
 
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.asJsoup()
-        val iframes = doc.select("#nk-player iframe, .nk-player-frame iframe, iframe")
-            .mapNotNull {
-                it.attr("abs:src").ifBlank { it.attr("src") }.takeIf(String::isNotBlank)
-            }
+        val streamingServers = doc.select(
+            "#nk-player .nk-player-frame iframe[src], .nk-player-frame iframe[src]",
+        ).mapNotNull { iframe ->
+            iframe.attr("abs:src").ifBlank { iframe.attr("src") }
+                .takeIf(String::isNotBlank)
+                ?.let { if (it.startsWith("//")) "https:$it" else it }
+        }.filterNot(::isAdIframe)
             .distinct()
 
-        return iframes.parallelCatchingFlatMapBlocking { iframe ->
-            val url = if (iframe.startsWith("//")) "https:" + iframe else iframe
-            extractVideo(url)
-        }.distinctBy { it.videoUrl }
+        val selected = streamingServers.getOrNull(2)
+            ?: streamingServers.lastOrNull()
+            ?: return emptyList()
+
+        return listOf(selected).parallelCatchingFlatMapBlocking { extractVideo(it) }
+            .distinctBy { it.videoUrl }
+    }
+
+    private fun isAdIframe(url: String): Boolean {
+        val host = runCatching { URI(url).host.orEmpty().lowercase() }.getOrDefault("")
+        return host.contains("a-ads.") ||
+            host.contains("doubleclick.") ||
+            host.contains("googlesyndication.") ||
+            host.contains("adservice.")
     }
 
     private suspend fun extractVideo(url: String): List<Video> {
@@ -215,6 +229,17 @@ class Nekopoi : AnimeHttpLegacySource() {
 
         if (lower.substringBefore("?").endsWith(".mp4") || lower.contains(".m3u8")) {
             return listOf(Video(url, "Direct", url, headers = headers))
+        }
+
+        if (
+            "discordapp.com" in lower ||
+            "discord.com" in lower ||
+            "discordapp.net" in lower ||
+            "discordcdn.com" in lower
+        ) {
+            val direct = extractDiscordServer(url)
+            if (direct.isNotEmpty()) return direct
+            return webViewFallback(url)
         }
 
         if ("playmogo" in lower) {
@@ -253,6 +278,34 @@ class Nekopoi : AnimeHttpLegacySource() {
 
         return webViewFallback(url)
     }
+
+    private suspend fun extractDiscordServer(url: String): List<Video> = runCatching {
+        val requestHeaders = headers.newBuilder()
+            .set("Referer", "$baseUrl/")
+            .build()
+        val response = client.newCall(GET(url, requestHeaders)).awaitSuccess()
+        val finalUrl = response.request.url.toString()
+        val contentType = response.header("Content-Type").orEmpty().lowercase()
+
+        if (
+            contentType.startsWith("video/") ||
+            finalUrl.substringBefore("?").endsWith(".mp4", true) ||
+            finalUrl.substringBefore("?").endsWith(".webm", true)
+        ) {
+            return listOf(Video(finalUrl, "Server 3", finalUrl, headers = requestHeaders))
+        }
+
+        val html = response.body.string()
+        val document = Jsoup.parse(html, finalUrl)
+        val directUrl = document.selectFirst("video[src], source[src]")?.let {
+            it.attr("abs:src").ifBlank { it.attr("src") }
+        }?.takeIf(String::isNotBlank)
+            ?: DISCORD_MEDIA_REGEX.find(html)?.value
+
+        if (directUrl.isNullOrBlank()) return emptyList()
+
+        listOf(Video(directUrl, "Server 3", directUrl, headers = requestHeaders))
+    }.getOrDefault(emptyList())
 
     private suspend fun extractPlaymogo(url: String): List<Video> = runCatching {
         val uri = URI(url)
@@ -415,6 +468,10 @@ class Nekopoi : AnimeHttpLegacySource() {
         private val FILE_URL_REGEX = Regex("""(?i)["']?file["']?\s*:\s*["'](https?://[^"']+)["']""")
         private val M3U8_REGEX = Regex("""https?://[^"'\\\s]+\.m3u8[^"'\\\s]*""", RegexOption.IGNORE_CASE)
         private val TOOLTIP_IMG_REGEX = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        private val DISCORD_MEDIA_REGEX = Regex(
+            """https?://[^"'\\\s<>]+(?:discordapp\.com|discordapp\.net|discord\.com|discordcdn\.com)[^"'\\\s<>]+\.(?:mp4|webm)(?:\?[^"'\\\s<>]*)?""",
+            RegexOption.IGNORE_CASE,
+        )
         private const val NONCE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     }
 }

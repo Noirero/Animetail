@@ -481,6 +481,7 @@ def probe_nekopoi():
             f"Nekopoi reachability: HTTP {status}, cloudflare_challenge={challenge}, "
             f"listing_markers={listing_markers}, detail_episode_links={detail_episode_links}, "
             f"final_kind={final_kind}, player_present={player_present}, iframe_hosts={iframe_hosts[:8]}, "
+            f"server3_host={(iframe_hosts[3] if len(iframe_hosts) > 3 and iframe_hosts[0] == 'ad.a-ads.com' else (iframe_hosts[2] if len(iframe_hosts) > 2 else None))}, "
             f"cover_probe={cover_probe}, iframe_debug={iframe_debug}"
         )
     except Exception as exc:
