@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
@@ -212,10 +213,10 @@ class AniWatch : AnimeHttpLegacySource() {
             ServerLink(name, type, link)
         }.distinctBy { it.link }
 
-        return links.flatMap(::extractServer).distinctBy { it.videoUrl }
+        return links.parallelCatchingFlatMap(::extractServer).distinctBy { it.videoUrl }
     }
 
-    private fun extractServer(source: ServerLink): List<Video> {
+    private suspend fun extractServer(source: ServerLink): List<Video> {
         val link = source.link
         val lower = link.lowercase()
         if (lower.contains(".m3u8") || lower.substringBefore("?").endsWith(".mp4")) {
