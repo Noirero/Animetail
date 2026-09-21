@@ -256,7 +256,10 @@ class AniWatch : AnimeHttpLegacySource() {
             ?: Regex("""VIDEO_TOKEN\s*=\s*["\u0027]([^"\u0027]+)["\u0027]""", RegexOption.IGNORE_CASE)
                 .find(html)?.groupValues?.getOrNull(1)
                 ?.let { "https://my.1anime.site/stream/$it" }
-            ?: Regex("""["\u0027](https?://[^"\u0027]*/stream/[A-Za-z0-9]+)["\u0027]""", RegexOption.IGNORE_CASE)
+            ?: Regex("""["\u0027](/stream/[^"\u0027\s<>]+)["\u0027]""", RegexOption.IGNORE_CASE)
+                .find(html)?.groupValues?.getOrNull(1)
+                ?.let { URI(embedUrl).resolve(it).toString() }
+            ?: Regex("""["\u0027](https?://[^"\u0027]*/stream/[^"\u0027\s<>]+)["\u0027]""", RegexOption.IGNORE_CASE)
                 .find(html)?.groupValues?.getOrNull(1)
             ?: return emptyList()
 
