@@ -4,16 +4,23 @@ import json
 import re
 import sys
 import urllib.request
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/145.0 Safari/537.36"
 BASE = "https://aniwatch.co.at"
 EPISODE = BASE + "/one-piece-episode-1-english-subbed/"
 
-def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Referer": BASE + "/"})
+def fetch(url, referer=None):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": UA,
+            "Referer": referer or BASE + "/",
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        },
+    )
     with urllib.request.urlopen(req, timeout=25) as r:
-        return r.status, r.read().decode("utf-8", "replace")
+        return r.status, r.headers.get("Content-Type", ""), r.read().decode("utf-8", "replace")
 
 def first_match(patterns, text):
     for pattern in patterns:
@@ -22,8 +29,40 @@ def first_match(patterns, text):
             return m.group(1)
     return None
 
+def inspect_embed(url):
+    try:
+        status, content_type, page = fetch(url, EPISODE)
+    except Exception as exc:
+        return f"fetch_error={type(exc).__name__}:{exc}"
+
+    direct = []
+    for pattern in [
+        r'https?://[^"\'\\\s<>]+?\.m3u8(?:\?[^"\'\\\s<>]*)?',
+        r'https?://[^"\'\\\s<>]+?\.mp4(?:\?[^"\'\\\s<>]*)?',
+    ]:
+        direct.extend(re.findall(pattern, page, re.I))
+
+    script_hosts = []
+    for src in re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', page, re.I):
+        if src.startswith("//"):
+            src = "https:" + src
+        host = urlparse(src).hostname
+        if host and host not in script_hosts:
+            script_hosts.append(host)
+
+    title = first_match([r'<title[^>]*>(.*?)</title>'], page)
+    markers = []
+    for marker in ["jwplayer", "videojs", "plyr", "hls.js", "sources:", "file:", ".m3u8", ".mp4"]:
+        if marker.lower() in page.lower():
+            markers.append(marker)
+
+    return (
+        f"http={status}, content_type={content_type}, title={title!r}, "
+        f"direct_media={len(direct)}, markers={markers}, script_hosts={script_hosts[:8]}"
+    )
+
 def probe_aniwatch():
-    status, page = fetch(EPISODE)
+    status, _, page = fetch(EPISODE)
     anime_id = first_match([
         r'["\']anime_id["\']\s*:\s*["\']?(\d+)',
         r'anime_id\s*[:=]\s*["\']?(\d+)',
@@ -32,7 +71,7 @@ def probe_aniwatch():
     if not anime_id:
         raise RuntimeError("AniWatch: anime_id not found")
 
-    _, list_raw = fetch(f"{BASE}/wp-json/hianime/v1/episode/list/{anime_id}")
+    _, _, list_raw = fetch(f"{BASE}/wp-json/hianime/v1/episode/list/{anime_id}", EPISODE)
     list_html = json.loads(list_raw).get("html", "")
     ep_id = first_match([
         r'data-number=["\']1(?:\.0)?["\'][^>]*data-id=["\'](\d+)["\']',
@@ -41,14 +80,16 @@ def probe_aniwatch():
     if not ep_id:
         raise RuntimeError("AniWatch: episode id not found")
 
-    _, servers_raw = fetch(f"{BASE}/wp-json/hianime/v1/episode/servers/{ep_id}")
+    _, _, servers_raw = fetch(f"{BASE}/wp-json/hianime/v1/episode/servers/{ep_id}", EPISODE)
     servers_html = json.loads(servers_raw).get("html", "")
     hashes = re.findall(r'data-hash=["\']([^"\']+)["\']', servers_html, re.I)
+    links = []
     hosts = []
     for value in hashes:
         try:
             decoded = base64.b64decode(value + "===" ).decode("utf-8", "replace").strip()
             if decoded.startswith(("http://", "https://")):
+                links.append(decoded)
                 host = urlparse(decoded).hostname
                 if host and host not in hosts:
                     hosts.append(host)
@@ -56,11 +97,13 @@ def probe_aniwatch():
             pass
     if not hosts:
         raise RuntimeError("AniWatch: no decodable server links")
+
     print(f"AniWatch OK: HTTP {status}, anime_id={anime_id}, episode_id={ep_id}, hosts={','.join(hosts)}")
+    print(f"AniWatch embed probe: host={urlparse(links[0]).hostname}, {inspect_embed(links[0])}")
 
 def probe_nekopoi():
     try:
-        status, page = fetch("https://nekopoi.care/")
+        status, _, page = fetch("https://nekopoi.care/", "https://nekopoi.care/")
         challenge = "cf-chl-" in page or "Just a moment" in page
         print(f"Nekopoi reachability: HTTP {status}, cloudflare_challenge={challenge}")
     except Exception as exc:
