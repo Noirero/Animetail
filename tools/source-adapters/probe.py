@@ -121,17 +121,24 @@ def inspect_embed(url):
     has_video_token = token_match is not None
     has_source_tag = bool(re.search(r'<source\b[^>]+src=', page, re.I))
     stream_probe = "not_available"
+    stream_strategy = "none"
     if token_match:
+        stream_strategy = "video_token"
         stream_probe = probe_media_endpoint(f"https://my.1anime.site/stream/{token_match.group(1)}")
     else:
         relative_match = re.search(r'["\'](/stream/[^"\'\s<>]+)["\']', page, re.I)
         if relative_match:
+            stream_strategy = "relative_literal"
             stream_probe = probe_media_endpoint(urljoin(url, relative_match.group(1)))
+        elif "/play/" in urlparse(url).path:
+            stream_strategy = "play_path"
+            stream_probe = probe_media_endpoint(url.replace("/play/", "/stream/", 1))
 
     return (
         f"selected_http={selected_status}, content_type={selected_content_type}, title={title!r}, "
         f"direct_media={len(direct)}, video_token={has_video_token}, source_tag={has_source_tag}, "
-        f"stream_probe={stream_probe}, markers={markers}, script_hosts={script_hosts[:8]}, "
+        f"stream_strategy={stream_strategy}, stream_probe={stream_probe}, "
+        f"markers={markers}, script_hosts={script_hosts[:8]}, "
         f"variants={variants}"
     )
 
