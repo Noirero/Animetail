@@ -29,6 +29,25 @@ def first_match(patterns, text):
             return m.group(1)
     return None
 
+def probe_media_endpoint(url):
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": UA,
+                "Referer": "https://my.1anime.site/",
+                "Range": "bytes=0-0",
+                "Accept": "*/*",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return (
+                f"http={r.status}, content_type={r.headers.get('Content-Type', '')}, "
+                f"final_host={urlparse(r.geturl()).hostname}"
+            )
+    except Exception as exc:
+        return f"error={type(exc).__name__}:{exc}"
+
 def inspect_embed(url):
     try:
         status, content_type, page = fetch(url, EPISODE)
@@ -56,13 +75,17 @@ def inspect_embed(url):
         if marker.lower() in page.lower():
             markers.append(marker)
 
-    has_video_token = bool(re.search(r'VIDEO_TOKEN\s*=\s*["\'][^"\']+["\']', page, re.I))
+    token_match = re.search(r'VIDEO_TOKEN\s*=\s*["\']([^"\']+)["\']', page, re.I)
+    has_video_token = token_match is not None
     has_source_tag = bool(re.search(r'<source\b[^>]+src=', page, re.I))
+    stream_probe = "not_available"
+    if token_match:
+        stream_probe = probe_media_endpoint(f"https://my.1anime.site/stream/{token_match.group(1)}")
 
     return (
         f"http={status}, content_type={content_type}, title={title!r}, "
         f"direct_media={len(direct)}, video_token={has_video_token}, source_tag={has_source_tag}, "
-        f"markers={markers}, script_hosts={script_hosts[:8]}"
+        f"stream_probe={stream_probe}, markers={markers}, script_hosts={script_hosts[:8]}"
     )
 
 def probe_aniwatch():
