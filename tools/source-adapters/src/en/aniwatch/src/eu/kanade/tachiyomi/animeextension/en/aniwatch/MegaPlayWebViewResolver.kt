@@ -43,7 +43,7 @@ class MegaPlayWebViewResolver(private val globalHeaders: Headers) {
                     view: WebView?,
                     request: WebResourceRequest?,
                 ): WebResourceResponse? {
-                    val req = request ?: return super.shouldInterceptRequest(view, request)
+                    val req = request ?: return null
                     val url = req.url.toString()
 
                     if (MEDIA_REGEX.containsMatchIn(url) && result.get() == null) {
@@ -64,7 +64,7 @@ class MegaPlayWebViewResolver(private val globalHeaders: Headers) {
                         }
                     }
 
-                    return super.shouldInterceptRequest(view, request)
+                    return super.shouldInterceptRequest(view, req)
                 }
             }
 
