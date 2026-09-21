@@ -96,6 +96,11 @@ def inspect_embed(url):
             selected_content_type = content_type
 
     page = selected_page
+    stream_index = page.find("/stream/")
+    stream_context = ""
+    if stream_index >= 0:
+        stream_context = re.sub(r"\\s+", " ", page[max(0, stream_index - 100):stream_index + 180])
+
     direct = []
     for pattern in [
         r'https?://[^"\'\\\s<>]+?\.m3u8(?:\?[^"\'\\\s<>]*)?',
@@ -138,7 +143,7 @@ def inspect_embed(url):
         f"selected_http={selected_status}, content_type={selected_content_type}, title={title!r}, "
         f"direct_media={len(direct)}, video_token={has_video_token}, source_tag={has_source_tag}, "
         f"stream_strategy={stream_strategy}, stream_probe={stream_probe}, "
-        f"markers={markers}, script_hosts={script_hosts[:8]}, "
+        f"stream_context={stream_context!r}, markers={markers}, script_hosts={script_hosts[:8]}, "
         f"variants={variants}"
     )
 
@@ -179,7 +184,10 @@ def probe_aniwatch():
     if not hosts:
         raise RuntimeError("AniWatch: no decodable server links")
 
-    print(f"AniWatch OK: HTTP {status}, anime_id={anime_id}, episode_id={ep_id}, hosts={','.join(hosts)}")
+    print(
+        f"AniWatch OK: HTTP {status}, anime_id={anime_id}, episode_id={ep_id}, "
+        f"hosts={','.join(hosts)}, first_path={urlparse(links[0]).path}"
+    )
     print(f"AniWatch embed probe: host={urlparse(links[0]).hostname}, {inspect_embed(links[0])}")
 
 def probe_nekopoi():
