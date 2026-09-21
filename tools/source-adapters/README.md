@@ -29,3 +29,7 @@ cd anime-extensions
 
 The probe script checks AniWatch's live episode REST bridge and reports
 Nekopoi reachability. It does not download media.
+
+AniWatch follows the public OneAnime wrapper to its MegaPlay iframe and uses an
+Android WebView request observer to capture the media request emitted by the player.
+No MegaPlay decryption key or private token secret is embedded in this adapter.

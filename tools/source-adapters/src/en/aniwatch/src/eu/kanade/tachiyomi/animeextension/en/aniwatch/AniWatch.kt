@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.en.aniwatch
 
 import android.util.Base64
 import aniyomi.lib.omniembedextractor.OmniEmbedExtractor
+import aniyomi.lib.playlistutils.PlaylistUtils
 import aniyomi.lib.rapidcloudextractor.RapidCloudExtractor
 import aniyomi.lib.vidsrcextractor.VidsrcExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -37,6 +38,8 @@ class AniWatch : AnimeHttpLegacySource() {
     private val vidsrc by lazy { VidsrcExtractor(client, headers) }
     private val omni by lazy { OmniEmbedExtractor(client, headers) }
     private val rapidCloud by lazy { RapidCloudExtractor(client, headers, preferences) }
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val megaPlayResolver by lazy { MegaPlayWebViewResolver(headers) }
 
     override fun headersBuilder(): Headers.Builder =
         super.headersBuilder().set("Referer", "$baseUrl/")
@@ -250,6 +253,49 @@ class AniWatch : AnimeHttpLegacySource() {
         val html = response.body.string()
         val document = Jsoup.parse(html, embedUrl)
 
+        val iframeUrl = document.selectFirst("iframe[src]")?.let {
+            it.attr("abs:src").ifBlank { it.attr("src") }
+        }?.takeIf(String::isNotBlank)
+
+        if (iframeUrl != null) {
+            val iframeHost = iframeUrl.toHttpUrlOrNull()?.host?.lowercase().orEmpty()
+            if ("megaplay." in iframeHost) {
+                val resolved = megaPlayResolver.resolve(iframeUrl, embedUrl)
+                if (resolved != null) {
+                    val mediaUrl = resolved.url
+                    val mediaHeaders = resolved.headers.newBuilder().apply {
+                        if (get("Referer").isNullOrBlank()) set("Referer", iframeUrl)
+                    }.build()
+
+                    if (mediaUrl.contains(".m3u8", ignoreCase = true)) {
+                        return playlistUtils.extractFromHls(
+                            playlistUrl = mediaUrl,
+                            videoNameGen = { quality -> source.type + " - " + source.name + " - " + quality },
+                            referer = iframeUrl,
+                            masterHeaders = mediaHeaders,
+                            videoHeaders = mediaHeaders,
+                        )
+                    }
+
+                    if (mediaUrl.substringBefore("?").endsWith(".mp4", ignoreCase = true)) {
+                        return listOf(
+                            Video(
+                                mediaUrl,
+                                source.type + " - " + source.name,
+                                mediaUrl,
+                                headers = mediaHeaders,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            val iframeVideos = runCatching {
+                omni.extractVideos(iframeUrl, source.type + " - " + source.name, emptyList())
+            }.getOrDefault(emptyList())
+            if (iframeVideos.isNotEmpty()) return iframeVideos
+        }
+
         val streamUrl = document.selectFirst("source[src]")?.let {
             it.attr("abs:src").ifBlank { it.attr("src") }
         }?.takeIf(String::isNotBlank)
@@ -261,7 +307,6 @@ class AniWatch : AnimeHttpLegacySource() {
                 ?.let { URI(embedUrl).resolve(it).toString() }
             ?: Regex("""["\u0027](https?://[^"\u0027]*/stream/[^"\u0027\s<>]+)["\u0027]""", RegexOption.IGNORE_CASE)
                 .find(html)?.groupValues?.getOrNull(1)
-            ?: embedUrl.takeIf { "/play/" in it }?.replaceFirst("/play/", "/stream/")
             ?: return emptyList()
 
         val streamOrigin = streamUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: embedUrl

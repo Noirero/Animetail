@@ -1,13 +1,14 @@
 ext {
     extName = 'AniWatch'
     extClass = '.AniWatch'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 
 apply plugin: "kei.plugins.extension.legacy"
 
 dependencies {
+    implementation(project(":lib:playlistutils"))
     implementation(project(":lib:vidsrcextractor"))
     implementation(project(":lib:omniembedextractor"))
     implementation(project(":lib:rapidcloudextractor"))
