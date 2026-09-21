@@ -231,11 +231,48 @@ class AniWatch : AnimeHttpLegacySource() {
         val host = link.toHttpUrlOrNull()?.host?.lowercase().orEmpty()
         return runCatching {
             when {
+                "1anime.site" in host -> extractOneAnime(link, source)
                 "vidsrc" in host -> vidsrc.videosFromUrl(link, source.name, source.type)
                 "rapid-cloud" in host -> rapidCloud.getVideosFromUrl(link, source.type, source.name)
                 else -> omni.extractVideos(link, source.type + " - " + source.name, emptyList())
             }
         }.getOrDefault(emptyList())
+    }
+
+    private suspend fun extractOneAnime(embedUrl: String, source: ServerLink): List<Video> {
+        val embedHeaders = headers.newBuilder()
+            .set("Referer", "$baseUrl/")
+            .set("Origin", baseUrl)
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .build()
+
+        val response = client.newCall(GET(embedUrl, embedHeaders)).awaitSuccess()
+        val html = response.body.string()
+        val document = Jsoup.parse(html, embedUrl)
+
+        val streamUrl = document.selectFirst("source[src]")?.let {
+            it.attr("abs:src").ifBlank { it.attr("src") }
+        }?.takeIf(String::isNotBlank)
+            ?: Regex("""VIDEO_TOKEN\s*=\s*["\u0027]([^"\u0027]+)["\u0027]""", RegexOption.IGNORE_CASE)
+                .find(html)?.groupValues?.getOrNull(1)
+                ?.let { "https://my.1anime.site/stream/$it" }
+            ?: Regex("""["\u0027](https?://[^"\u0027]*/stream/[A-Za-z0-9]+)["\u0027]""", RegexOption.IGNORE_CASE)
+                .find(html)?.groupValues?.getOrNull(1)
+            ?: return emptyList()
+
+        val streamOrigin = streamUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}/" } ?: embedUrl
+        val streamHeaders = headers.newBuilder()
+            .set("Referer", streamOrigin)
+            .build()
+
+        return listOf(
+            Video(
+                streamUrl,
+                source.type + " - " + source.name,
+                streamUrl,
+                headers = streamHeaders,
+            ),
+        )
     }
 
     private fun decodeHash(hash: String): String? {
