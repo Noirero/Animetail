@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.id.nekopoi
 import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
+import aniyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -33,6 +34,7 @@ class Nekopoi : AnimeHttpLegacySource() {
     private val dood by lazy { DoodExtractor(client) }
     private val streamWish by lazy { StreamWishExtractor(client, headers) }
     private val vidHide by lazy { VidHideExtractor(client, headers) }
+    private val universal by lazy { UniversalExtractor(client) }
 
     override fun headersBuilder(): Headers.Builder =
         super.headersBuilder().set("Referer", "$baseUrl/")
@@ -205,21 +207,50 @@ class Nekopoi : AnimeHttpLegacySource() {
 
     private suspend fun extractVideo(url: String): List<Video> {
         val lower = url.lowercase()
-        return when {
-            "playmogo" in lower || "dood" in lower || "d000d" in lower || "ds2play" in lower ->
-                dood.videosFromUrl(url)
 
-            "streamwish" in lower || "wishembed" in lower || "awish" in lower || "streampoi" in lower ->
-                streamWish.videosFromUrl(url)
-
-            "vidhide" in lower || "vidhided" in lower || "embedwish" in lower ->
-                vidHide.videosFromUrl(url)
-
-            lower.substringBefore("?").endsWith(".mp4") || lower.contains(".m3u8") ->
-                listOf(Video(url, "Direct", url, headers = headers))
-
-            else -> emptyList()
+        if (lower.substringBefore("?").endsWith(".mp4") || lower.contains(".m3u8")) {
+            return listOf(Video(url, "Direct", url, headers = headers))
         }
+
+        if ("playmogo" in lower || "dood" in lower || "d000d" in lower || "ds2play" in lower) {
+            val direct = dood.videosFromUrl(url)
+            if (direct.isNotEmpty()) return direct
+
+            if ("playmogo" in lower) {
+                val id = url.substringAfterLast("/").substringBefore("?").substringBefore("#")
+                if (id.isNotBlank()) {
+                    val mirrored = dood.videosFromUrl("https://d000d.com/e/$id")
+                    if (mirrored.isNotEmpty()) return mirrored
+                }
+            }
+
+            return webViewFallback(url)
+        }
+
+        if ("streamwish" in lower || "wishembed" in lower || "awish" in lower || "streampoi" in lower) {
+            val direct = streamWish.videosFromUrl(url)
+            return direct.ifEmpty { webViewFallback(url) }
+        }
+
+        if ("vidhide" in lower || "vidhided" in lower || "embedwish" in lower) {
+            val direct = vidHide.videosFromUrl(url)
+            return direct.ifEmpty { webViewFallback(url) }
+        }
+
+        return webViewFallback(url)
+    }
+
+    private fun webViewFallback(url: String): List<Video> {
+        val fallbackHeaders = headers.newBuilder()
+            .set("Referer", "$baseUrl/")
+            .build()
+        return runCatching {
+            universal.videosFromUrl(
+                origRequestUrl = url,
+                origRequestHeader = fallbackHeaders,
+                prefix = "Nekopoi",
+            )
+        }.getOrDefault(emptyList())
     }
 
     private fun cleanTitle(input: String): String =

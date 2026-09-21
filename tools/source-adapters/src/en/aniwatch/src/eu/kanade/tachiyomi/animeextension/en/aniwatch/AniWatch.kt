@@ -76,13 +76,14 @@ class AniWatch : AnimeHttpLegacySource() {
     override fun getFilterList() = AnimeFilterList()
 
     private fun Document.parseListing(): AnimesPage {
-        val cards = select(".flw-item, main article").filter {
-            it.selectFirst("a[href*='/anime/']") != null
+        val listingLinkSelector = "a[href*='/anime/'], a[href*='-episode-']"
+        val cards = select(".flw-item, main article, article").filter {
+            it.selectFirst(listingLinkSelector) != null
         }
         val items = if (cards.isNotEmpty()) {
             cards.mapNotNull(::animeFromElement)
         } else {
-            select("a[href*='/anime/']:has(img)").mapNotNull { link ->
+            select("$listingLinkSelector:has(img)").mapNotNull { link ->
                 animeFromLink(link, link.selectFirst("img"), link.parent() ?: link)
             }
         }.distinctBy { it.url }
@@ -92,19 +93,24 @@ class AniWatch : AnimeHttpLegacySource() {
     }
 
     private fun animeFromElement(element: Element): SAnime? {
-        val link = element.selectFirst("a[href*='/anime/']") ?: return null
+        val link = element.selectFirst("a[href*='/anime/'], a[href*='-episode-']") ?: return null
         return animeFromLink(link, element.selectFirst("img"), element)
     }
 
     private fun animeFromLink(link: Element, image: Element?, scope: Element): SAnime? {
         val href = link.attr("abs:href").ifBlank { link.attr("href") }
         if (href.isBlank()) return null
-        val title = scope.selectFirst(".film-name, h2, h3, h4")?.text()?.takeIf(String::isNotBlank)
-            ?: link.attr("title").takeIf(String::isNotBlank)
-            ?: link.attr("data-jname").takeIf(String::isNotBlank)
-            ?: link.text().takeIf(String::isNotBlank)
-            ?: image?.attr("alt")?.takeIf(String::isNotBlank)
-            ?: return null
+        val title = (
+            scope.selectFirst(".film-name, h2, h3, h4")?.text()?.takeIf(String::isNotBlank)
+                ?: link.attr("title").takeIf(String::isNotBlank)
+                ?: link.attr("data-jname").takeIf(String::isNotBlank)
+                ?: link.text().takeIf(String::isNotBlank)
+                ?: image?.attr("alt")?.takeIf(String::isNotBlank)
+                ?: return null
+            ).replace(
+            Regex("""(?i)\s+Episode\s+\d+(?:\.\d+)?(?:\s+English\s+(?:Sub(?:bed)?|Dub(?:bed)?))?.*$"""),
+            "",
+        ).trim()
         val thumb = image?.let {
             it.attr("abs:data-src").ifBlank {
                 it.attr("data-src").ifBlank { it.attr("abs:src").ifBlank { it.attr("src") } }
