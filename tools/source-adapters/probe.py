@@ -56,9 +56,13 @@ def inspect_embed(url):
         if marker.lower() in page.lower():
             markers.append(marker)
 
+    has_video_token = bool(re.search(r'VIDEO_TOKEN\s*=\s*["\'][^"\']+["\']', page, re.I))
+    has_source_tag = bool(re.search(r'<source\b[^>]+src=', page, re.I))
+
     return (
         f"http={status}, content_type={content_type}, title={title!r}, "
-        f"direct_media={len(direct)}, markers={markers}, script_hosts={script_hosts[:8]}"
+        f"direct_media={len(direct)}, video_token={has_video_token}, source_tag={has_source_tag}, "
+        f"markers={markers}, script_hosts={script_hosts[:8]}"
     )
 
 def probe_aniwatch():
