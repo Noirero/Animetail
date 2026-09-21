@@ -103,9 +103,45 @@ def probe_aniwatch():
 
 def probe_nekopoi():
     try:
-        status, _, page = fetch("https://nekopoi.care/", "https://nekopoi.care/")
+        base = "https://nekopoi.care/"
+        status, _, page = fetch(base, base)
         challenge = "cf-chl-" in page or "Just a moment" in page
-        print(f"Nekopoi reachability: HTTP {status}, cloudflare_challenge={challenge}")
+        listing_markers = {
+            "nk-post-card": page.count("nk-post-card"),
+            "nk-episode-card": page.count("nk-episode-card"),
+            "nk-search-item": page.count("nk-search-item"),
+        }
+
+        hrefs = re.findall(r'href=["\']([^"\']+)["\']', page, re.I)
+        candidate = None
+        for href in hrefs:
+            lower = href.lower()
+            if any(token in lower for token in ["/hentai/", "/anime/", "/episode/"]):
+                if href.startswith("//"):
+                    href = "https:" + href
+                elif href.startswith("/"):
+                    href = "https://nekopoi.care" + href
+                if href.startswith("http"):
+                    candidate = href
+                    break
+
+        iframe_hosts = []
+        if candidate and not challenge:
+            try:
+                _, _, detail = fetch(candidate, base)
+                for src in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', detail, re.I):
+                    if src.startswith("//"):
+                        src = "https:" + src
+                    host = urlparse(src).hostname
+                    if host and host not in iframe_hosts:
+                        iframe_hosts.append(host)
+            except Exception:
+                pass
+
+        print(
+            f"Nekopoi reachability: HTTP {status}, cloudflare_challenge={challenge}, "
+            f"listing_markers={listing_markers}, iframe_hosts={iframe_hosts[:8]}"
+        )
     except Exception as exc:
         print(f"Nekopoi reachability warning: {exc}")
 
