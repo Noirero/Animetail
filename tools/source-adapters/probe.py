@@ -143,7 +143,7 @@ def probe_nekopoi():
         candidate = None
         for href in hrefs:
             lower = href.lower()
-            if any(token in lower for token in ["/hentai/", "/anime/", "/episode/"]):
+            if any(token in lower for token in ["/hentai/", "/anime/", "-episode-", "/episode/"]):
                 if href.startswith("//"):
                     href = "https:" + href
                 elif href.startswith("/"):
@@ -152,11 +152,33 @@ def probe_nekopoi():
                     candidate = href
                     break
 
+        detail_episode_links = 0
+        player_present = False
         iframe_hosts = []
+        final_kind = "none"
+
         if candidate and not challenge:
             try:
                 _, _, detail = fetch(candidate, base)
-                for src in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', detail, re.I):
+                episode_hrefs = []
+                for href in re.findall(r'href=["\']([^"\']+)["\']', detail, re.I):
+                    lower = href.lower()
+                    if "-episode-" not in lower and "/episode/" not in lower:
+                        continue
+                    if href.startswith("//"):
+                        href = "https:" + href
+                    elif href.startswith("/"):
+                        href = "https://nekopoi.care" + href
+                    if href.startswith("http") and href not in episode_hrefs:
+                        episode_hrefs.append(href)
+
+                detail_episode_links = len(episode_hrefs)
+                target = episode_hrefs[0] if episode_hrefs else candidate
+                final_kind = "episode" if episode_hrefs or "-episode-" in target.lower() else "detail"
+                _, _, player_page = fetch(target, candidate)
+                player_present = 'id="nk-player"' in player_page or "nk-player-frame" in player_page
+
+                for src in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', player_page, re.I):
                     if src.startswith("//"):
                         src = "https:" + src
                     host = urlparse(src).hostname
@@ -167,7 +189,8 @@ def probe_nekopoi():
 
         print(
             f"Nekopoi reachability: HTTP {status}, cloudflare_challenge={challenge}, "
-            f"listing_markers={listing_markers}, iframe_hosts={iframe_hosts[:8]}"
+            f"listing_markers={listing_markers}, detail_episode_links={detail_episode_links}, "
+            f"final_kind={final_kind}, player_present={player_present}, iframe_hosts={iframe_hosts[:8]}"
         )
     except Exception as exc:
         print(f"Nekopoi reachability warning: {exc}")
